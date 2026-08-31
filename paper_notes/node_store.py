@@ -17,7 +17,7 @@ display_label이 살짝 다른 표기(예: 단수/복수)일 때도 같은 노�
 경우(예: 논문 A의 "MoE", 논문 B의 "Mixture-of-Experts Layer"를 논문 C가 이어줌),
 파일을 즉시 합치지 않는다. 잘못된 병합(예: 상위/하위 개념을 같은 것으로 오판)은
 사용자가 이미 노드에 메모를 남긴 뒤라면 되돌리기 어렵기 때문에, _merge_candidates.json에
-후보(status=pending)로만 기록해두고, 실제 병합(execute_merge)은 review_merge_candidates.py
+후보(status=pending)로만 기록해두고, 실제 병합(execute_merge)은 util/review_merge_candidates.py
 CLI로 사람이 검토·승인한 뒤에만 실행한다. 병합되면 나중 생성된 쪽은 삭제되지 않고
 redirect_to를 가진 스텁으로 축소되며(다른 노트가 그 slug로 건 wikilink가 깨지지
 않게), 그 라벨은 생존 노드의 aliases에 합쳐져 Obsidian 자체의 alias 해석으로도
@@ -272,7 +272,7 @@ _LIST_NODES_CACHE: dict[tuple[str, str], tuple[tuple, list[dict], dict[str, dict
 
 def _dir_signature(folder: Path) -> tuple:
     """폴더 안 .md 파일들의 (이름, 수정시각) 목록. 내용을 읽지 않고 메타데이터만
-    보므로 전체 파싱보다 훨씬 저렴하다 - review_merge_candidates.py처럼 다른
+    보므로 전체 파싱보다 훨씬 저렴하다 - util/review_merge_candidates.py처럼 다른
     프로세스가 파일을 바꿔도, 다음 list_nodes() 호출에서 mtime 차이로 정확히
     감지된다."""
     try:
@@ -469,7 +469,7 @@ def _write_redirect_stub(path: Path, slug: str, redirect_to: str) -> None:
 def execute_merge(store_root: str, node_type: str, slug_a: str, slug_b: str) -> str:
     """slug_a/slug_b 두 노드 파일을 하나로 합친다. 더 먼저 생성된 쪽이 생존자가
     되고, 나중 생성된 쪽은 내용이 흡수된 뒤 redirect 스텁으로 축소된다. 사람이
-    검토·승인한 뒤에만 호출돼야 한다(review_merge_candidates.py). 생존자 slug를
+    검토·승인한 뒤에만 호출돼야 한다(util/review_merge_candidates.py). 생존자 slug를
     반환한다."""
     node_dir = _node_dir(store_root, node_type)
     path_a, path_b = node_dir / f"{slug_a}.md", node_dir / f"{slug_b}.md"
