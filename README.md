@@ -1,4 +1,4 @@
-# AutoNote (BrainGraph)
+# BrainGraph
 
 Turn what you read into a knowledge graph you actually own, then talk to it.
 
@@ -10,7 +10,14 @@ AutoNote is the implementation of **BrainGraph**: a personal, self-growing knowl
 - **One node = one Markdown file** — every concept or entity is a single `.md` file holding its own description, aliases, categories, and the papers it came from. Nothing lives only inside a database you can't read.
 - **Base graph, then refinement** — the first pass comes from an LLM reading your source material; from there you create, delete, merge, and re-link nodes by hand (via the graph UI or through conversation) until the graph says what you actually know.
 
-## What's implemented today
+## Two views into the Brain, both editable
+
+- **Graph view** (`/`) — nodes plus `LINKED_TO` edges only: which paper each concept/entity came from, and which entities sit under which concept. This is where you create, delete, or merge concept/entity nodes, and link or unlink them to papers.
+- **Semantic View** (`/semantic_view.html`) — the same nodes, plus every typed semantic relation between them (`USES`, `EXTENDS`, `PART_OF`, `COMPARED_TO`, ...). Drag between two nodes to create a new relation, hover an edge to see its type/rationale/source papers, and edit or delete existing relations right on the graph.
+
+Neither view is read-only — what Claude extracts from a paper is only a first draft. You're expected to reshape nodes, edges, and relations by hand in whichever view until the graph matches what you actually know.
+
+## TODO
 
 | Feature | Status |
 |---|---|
@@ -83,13 +90,6 @@ uvicorn app:app --reload --port 8123
 Open `http://localhost:8123`.
 
 To let Claude Desktop/Code query and grow the Brain directly, register `mcp_server.py` as an MCP server (see `.mcp.json`) — it talks to the same running `app.py` over HTTP, so start `uvicorn` first.
-
-## Two views into the Brain, both editable
-
-- **Graph view** (`/`) — nodes plus `LINKED_TO` edges only: which paper each concept/entity came from, and which entities sit under which concept. This is where you create, delete, or merge concept/entity nodes, and link or unlink them to papers.
-- **Semantic View** (`/semantic_view.html`) — the same nodes, plus every typed semantic relation between them (`USES`, `EXTENDS`, `PART_OF`, `COMPARED_TO`, ...). Drag between two nodes to create a new relation, hover an edge to see its type/rationale/source papers, and edit or delete existing relations right on the graph.
-
-Neither view is read-only — what Claude extracts from a paper is only a first draft. You're expected to reshape nodes, edges, and relations by hand in whichever view until the graph matches what you actually know.
 
 ## Notes on cost
 
