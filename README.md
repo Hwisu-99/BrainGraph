@@ -13,7 +13,23 @@ AutoNote is the implementation of **BrainGraph**: a personal, self-growing knowl
 ## Two views into the Brain, both editable
 
 - **Graph view** (`/`) — nodes plus `LINKED_TO` edges only: which paper each concept/entity came from, and which entities sit under which concept. This is where you create, delete, or merge concept/entity nodes, and link or unlink them to papers.
+
+<table>
+<tr>
+<td><img src="assets/readme/node_graph_1.png" width="100%"></td>
+<td><img src="assets/readme/node_graph_2.png" width="100%"></td>
+<td><img src="assets/readme/node_graph_3.png" width="100%"></td>
+</tr>
+</table>
+
 - **Semantic View** (`/semantic_view.html`) — the same nodes, plus every typed semantic relation between them (`USES`, `EXTENDS`, `PART_OF`, `COMPARED_TO`, ...). Drag between two nodes to create a new relation, hover an edge to see its type/rationale/source papers, and edit or delete existing relations right on the graph.
+
+<table>
+<tr>
+<td><img src="assets/readme/semantic_graph_1.png" width="100%"></td>
+<td><img src="assets/readme/semantic_graph_2.png" width="100%"></td>
+</tr>
+</table>
 
 Neither view is read-only — what Claude extracts from a paper is only a first draft. You're expected to reshape nodes, edges, and relations by hand in whichever view until the graph matches what you actually know.
 
