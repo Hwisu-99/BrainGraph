@@ -1,0 +1,24 @@
+[
+  {
+    "id": "7479c1dad5",
+    "name": "Hybird Transformer",
+    "paper_slugs": [
+      "Mamba Linear-Time Sequence Modeling with Selective State Spaces",
+      "Mamba-3 Improved Sequence Modeling using State Space Principles",
+      "Transformers are SSMs Generalized Models and Efficient Algorithms Thro"
+    ],
+    "created_at": "2026-08-26T13:04:43.477651+00:00",
+    "brain_id": null
+  },
+  {
+    "id": "4a000d397e",
+    "name": "Kimi",
+    "paper_slugs": [
+      "Kimi K2 Open Agentic Intelligence (Technical Report of Kimi K2)",
+      "Attention Residuals Technical Report of Attention Residuals",
+      "Kimi K3 Open Frontier Intelligence"
+    ],
+    "created_at": "2026-08-26T13:05:55.340790+00:00",
+    "brain_id": "857a7dcf37"
+  }
+]

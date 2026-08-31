@@ -1,0 +1,11 @@
+[
+  {
+    "type": "entity",
+    "slug_a": "multi-head-multi-value-attention-패턴",
+    "slug_b": "multi-query-attention-mqa",
+    "via_alias": "Multi-Query Attention (MQA)",
+    "detected_in_paper": "Transformers are SSMs Generalized Models and Efficient Algorithms Thro",
+    "detected_at": "2026-08-14T15:27:49.579690+00:00",
+    "status": "pending"
+  }
+]

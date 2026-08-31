@@ -1,0 +1,16 @@
+{
+  "types": {
+    "PART_OF": { "symmetric": false },
+    "IS_A": { "symmetric": false },
+    "USES": { "symmetric": false },
+    "EXTENDS": { "symmetric": false },
+    "IMPROVES_ON": { "symmetric": false },
+    "OUTPERFORMS": { "symmetric": false },
+    "SOLVES": { "symmetric": false },
+    "EVALUATED_ON": { "symmetric": false },
+    "LIMITED_BY": { "symmetric": false },
+    "COMPARED_TO": { "symmetric": true },
+    "CONTRADICTS": { "symmetric": true },
+    "RELATED": { "symmetric": true }
+  }
+}
