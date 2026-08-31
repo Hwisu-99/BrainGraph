@@ -22,5 +22,4 @@ __pycache__/
 # 아니라 이 프로젝트 폴더 아래에 저장되며, 사용자별 로컬 데이터라 버전관리 제외
 /_concepts
 /_entities
-/config
 /attachments

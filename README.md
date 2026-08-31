@@ -1,21 +1,43 @@
-# AutoNote
+# AutoNote (BrainGraph)
 
-Upload a research paper PDF and get back an Obsidian note, a concept diagram, and a live knowledge graph — automatically.
+Turn what you read into a knowledge graph you actually own, then talk to it.
 
-AutoNote reads a paper, sends it to Claude for a structured summary, and writes the result straight into your Obsidian vault as a Markdown note plus an Excalidraw concept diagram. The generated note is also uploaded to Supabase Storage, and a web UI renders an Obsidian-style force-directed graph of your notes, tags, and concepts.
+AutoNote is the implementation of **BrainGraph**: a personal, self-growing knowledge graph (a "Brain") built out of papers you feed it. An LLM drafts the first version of the graph automatically, but the graph is meant to be *yours* — you edit it by hand until it precisely reflects your own understanding, then connect it back to an LLM so the knowledge you've accumulated actually improves the answers you get.
+
+## Core ideas
+
+- **Brain** — the knowledge graph you're building: `concept`/`entity` nodes connected by typed relations, optionally grouped into multiple named containers (e.g. "Robot Brain", "RL Brain").
+- **One node = one Markdown file** — every concept or entity is a single `.md` file holding its own description, aliases, categories, and the papers it came from. Nothing lives only inside a database you can't read.
+- **Base graph, then refinement** — the first pass comes from an LLM reading your source material; from there you create, delete, merge, and re-link nodes by hand (via the graph UI or through conversation) until the graph says what you actually know.
+
+## What's implemented today
+
+| Feature | Status |
+|---|---|
+| PDF → structured Obsidian note + concept/entity graph (Claude extraction) | done |
+| Manual graph editing (create/delete/merge nodes, link/unlink papers & concepts) | done |
+| Typed semantic relations between concepts/entities (`USES`, `EXTENDS`, `PART_OF`, `COMPARED_TO`, ...) with a dedicated Semantic View | done |
+| Neo4j mirror + hybrid search for GraphRAG | done (Claude only, via MCP) |
+| Self-improving loop — Claude can create/link nodes mid-conversation | done (MCP tools) |
+| Multiple named Brains (containers) + merging two Brains | done |
+| GPT / Gemini GraphRAG connectors | planned |
+| Brain consolidation (importing someone else's Brain) | planned |
+| Schema that auto-adapts to non-paper domains | planned |
 
 ## How it works
 
 1. Drop a PDF into the web UI.
-2. The backend extracts the text (PyMuPDF) and sends it to Claude with a structured JSON schema (title, summary, problem/gap/method, key concepts, relationships between concepts, tags, ...).
-3. Claude's response is used to write:
-   - `<vault>/AutoNote/<slug>/<slug>.md` — the note itself, including wikilinks (`[[...]]`) between extracted concepts so they show up as graph nodes
-   - `<vault>/AutoNote/<slug>/<slug>.excalidraw` — a concept diagram built from the same concepts/relationships
-4. The `.md` note (only the note — not the PDF or the diagram) is uploaded to Supabase Storage.
-5. The web UI shows:
-   - A sidebar of every paper stored in Supabase, each with a button to focus the graph on just that paper
-   - A d3-force graph view: papers as orange nodes, tags as green nodes, concepts as gray nodes, connected by wikilinks and shared tags — the same logic Obsidian's graph view uses
-   - The estimated USD cost of the Claude API call, computed from actual token usage and the model that served the request (not hardcoded to one model)
+2. The backend extracts the text (PyMuPDF) and sends it to Claude with a structured JSON schema — a narrative summary plus the key concepts/entities and the semantic relations between them.
+3. Claude's response becomes:
+   - `<vault>/AutoNote/<slug>/<slug>.md` — the note itself, wikilinked to its concepts
+   - `<vault>/AutoNote/<slug>/<slug>.excalidraw` — a concept diagram
+   - one `.md` node file per new/updated concept and entity (`_concepts/`, `_entities/`), each carrying its own relations
+4. The note is uploaded to Supabase Storage; concept/entity nodes and relations are mirrored into Neo4j.
+5. The web UI gives you:
+   - A force-directed **graph view** — papers, tags, and concepts, focusable per paper
+   - A **Semantic View** for the typed concept/entity relation graph (hover an edge to see its type, rationale, and source papers)
+   - The estimated USD cost of each Claude call, computed from real token usage for whichever model served the request
+6. `mcp_server.py` exposes the same Brain (search, node CRUD, linking) to Claude Desktop/Code over MCP, so you can query and grow the graph from an ordinary conversation — web-UI edits and MCP edits go through the same FastAPI backend, so the two never drift apart.
 
 ## Requirements
 
@@ -23,6 +45,7 @@ AutoNote reads a paper, sends it to Claude for a structured summary, and writes 
 - An Obsidian vault on disk
 - An [Anthropic API key](https://console.anthropic.com/)
 - A [Supabase](https://supabase.com/) project with a Storage bucket
+- A [Neo4j](https://neo4j.com/) instance (the Aura free tier works) for GraphRAG/MCP search
 
 ## Setup
 
@@ -44,9 +67,12 @@ OBSIDIAN_VAULT_PATH=C:\path\to\your\Obsidian\vault
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_KEY=your-supabase-service-role-key
 SUPABASE_BUCKET=autonote-notes
+NEO4J_URI=neo4j+s://your-instance.databases.neo4j.io
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=your-neo4j-password
 ```
 
-`SUPABASE_KEY` should be a `service_role` key since notes are uploaded from trusted server-side code — never expose this key client-side.
+`SUPABASE_KEY` should be a `service_role` key since notes are uploaded from trusted server-side code — never expose this key client-side. `NEO4J_*` is optional: without it everything still works except Neo4j sync and GraphRAG search (those failures are caught and logged, not fatal).
 
 ## Run
 
@@ -56,23 +82,14 @@ uvicorn app:app --reload --port 8123
 
 Open `http://localhost:8123`.
 
-## Project structure
+To let Claude Desktop/Code query and grow the Brain directly, register `mcp_server.py` as an MCP server (see `.mcp.json`) — it talks to the same running `app.py` over HTTP, so start `uvicorn` first.
 
-```
-app.py                        # FastAPI app: upload pipeline + /api/graph + /api/papers
-paper_notes/
-  extractor.py                 # PDF -> text (PyMuPDF)
-  claude_client.py              # Claude call, structured summary, per-model cost calculation
-  obsidian_writer.py            # writes the Markdown note (incl. concept wikilinks)
-  graph_builder.py              # scans the vault and builds graph nodes/edges
-  dedup.py                      # MinHash-based near-duplicate merging for concept/entity labels
-  supabase_writer.py             # Supabase Storage upload/list
-  utils.py                       # slugify, etc.
-static/
-  index.html, graph.css, graph.js, papers.js   # frontend: upload UI, graph view, paper sidebar
-test_supabase_upload.py        # standalone script to verify Supabase connectivity
-backfill_supabase.py            # one-off script to upload pre-existing vault notes to Supabase
-```
+## Two views into the Brain, both editable
+
+- **Graph view** (`/`) — nodes plus `LINKED_TO` edges only: which paper each concept/entity came from, and which entities sit under which concept. This is where you create, delete, or merge concept/entity nodes, and link or unlink them to papers.
+- **Semantic View** (`/semantic_view.html`) — the same nodes, plus every typed semantic relation between them (`USES`, `EXTENDS`, `PART_OF`, `COMPARED_TO`, ...). Drag between two nodes to create a new relation, hover an edge to see its type/rationale/source papers, and edit or delete existing relations right on the graph.
+
+Neither view is read-only — what Claude extracts from a paper is only a first draft. You're expected to reshape nodes, edges, and relations by hand in whichever view until the graph matches what you actually know.
 
 ## Notes on cost
 
