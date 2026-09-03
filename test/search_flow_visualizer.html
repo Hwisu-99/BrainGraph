@@ -1,0 +1,865 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GraphRAG 검색 흐름 시각화</title>
+<style>
+  :root{
+    color-scheme: light;
+    --surface:      #fcfcfb;
+    --surface-2:    #f3f2ee;
+    --page:         #f9f9f7;
+    --text:         #0b0b0b;
+    --text-2:       #52514e;
+    --text-muted:   #898781;
+    --border:       #e1e0d9;
+    --border-strong:#c3c2b7;
+    --accent:       #2a78d6;
+    --accent-bg:    #eaf2fc;
+    --good:         #0ca30c;
+    --bad:          #d03b3b;
+    --warn:         #eda100;
+
+    --node-concept-bg: #eaf2fc; --node-concept-bd: #2a78d6;
+    --node-entity-bg:  #e3f6ef; --node-entity-bd:  #1baf7a;
+    --node-paper-bg:   #f0efec; --node-paper-bd:   #898781;
+
+    --grp-hierarchy: #4a3aa7; /* violet: PART_OF, IS_A */
+    --grp-usage:     #eb6834; /* orange: USES, EXTENDS, IMPROVES_ON */
+    --grp-compare:   #e34948; /* red:    OUTPERFORMS, COMPARED_TO, CONTRADICTS */
+    --grp-eval:      #eda100; /* yellow: SOLVES, EVALUATED_ON, LIMITED_BY */
+    --grp-related:   #898781; /* gray:   RELATED (fallback) */
+    --grp-provenance:#898781; /* gray:   LINKED_TO */
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      color-scheme: dark;
+      --surface:      #1a1a19;
+      --surface-2:    #232322;
+      --page:         #0d0d0d;
+      --text:         #ffffff;
+      --text-2:       #c3c2b7;
+      --text-muted:   #898781;
+      --border:       #2c2c2a;
+      --border-strong:#383835;
+      --accent:       #3987e5;
+      --accent-bg:    #16273d;
+      --good:         #0ca30c;
+      --bad:          #e66767;
+      --warn:         #c98500;
+
+      --node-concept-bg: #16273d; --node-concept-bd: #3987e5;
+      --node-entity-bg:  #12261e; --node-entity-bd:  #199e70;
+      --node-paper-bg:   #232322; --node-paper-bd:   #6b6a64;
+
+      --grp-hierarchy: #9085e9;
+      --grp-usage:     #eb875f;
+      --grp-compare:   #e66767;
+      --grp-eval:      #c98500;
+      --grp-related:   #a3a199;
+      --grp-provenance:#a3a199;
+    }
+  }
+  *{ box-sizing:border-box; }
+  body{
+    margin:0; background:var(--page); color:var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size:14px; line-height:1.55;
+  }
+  .wrap{ max-width:1180px; margin:0 auto; padding:24px 20px 80px; }
+  header.page{ margin-bottom:20px; }
+  header.page h1{ font-size:22px; margin:0 0 4px; }
+  header.page p{ margin:0; color:var(--text-2); }
+  header.page .doc-ref{ color:var(--text-muted); font-size:12.5px; margin-top:6px; }
+
+  .card{
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:12px; padding:16px 18px; margin-bottom:16px;
+  }
+  .card h2{ font-size:14px; margin:0 0 12px; color:var(--text-2); font-weight:700; letter-spacing:.01em; }
+
+  /* --- config bar --- */
+  .cfg-grid{ display:grid; grid-template-columns: 1.3fr .9fr .6fr; gap:12px 16px; }
+  @media (max-width:820px){ .cfg-grid{ grid-template-columns:1fr; } }
+  .field label{ display:block; font-size:12px; color:var(--text-muted); margin-bottom:4px; }
+  .field input[type=text], .field input[type=number], .field select{
+    width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--border-strong);
+    background:var(--surface); color:var(--text); font-size:13.5px;
+  }
+  .field input:focus, .field select:focus{ outline:2px solid var(--accent); outline-offset:1px; }
+  .status-row{ display:flex; align-items:center; gap:8px; margin-top:10px; font-size:12.5px; color:var(--text-2); }
+  .dot{ width:9px; height:9px; border-radius:50%; background:var(--text-muted); flex:0 0 auto; }
+  .dot.ok{ background:var(--good); }
+  .dot.bad{ background:var(--bad); }
+  .dot.pending{ background:var(--warn); animation:pulse 1.1s infinite; }
+  @keyframes pulse{ 0%,100%{opacity:1;} 50%{opacity:.35;} }
+  .hint{ color:var(--text-muted); font-size:12px; margin-top:4px; }
+
+  .mode-toggle{ display:flex; gap:6px; background:var(--surface-2); border:1px solid var(--border); border-radius:9px; padding:3px; }
+  .mode-toggle button{
+    flex:1; padding:7px 10px; border:none; border-radius:7px; background:transparent;
+    color:var(--text-2); font-size:12.5px; font-weight:600; cursor:pointer;
+  }
+  .mode-toggle button.active{ background:var(--accent); color:#fff; }
+
+  .improved-panel{ margin-top:12px; padding-top:12px; border-top:1px dashed var(--border); display:none; }
+  .improved-panel.show{ display:block; }
+  .improved-panel .row{ display:flex; flex-wrap:wrap; gap:16px; align-items:flex-start; }
+  .type-checks{ display:flex; flex-wrap:wrap; gap:6px 10px; max-width:640px; }
+  .type-chk{ display:flex; align-items:center; gap:5px; font-size:12px; color:var(--text-2); white-space:nowrap; }
+  .type-chk input{ accent-color:var(--accent); }
+  .type-chk .sw{ width:8px; height:8px; border-radius:2px; flex:0 0 auto; }
+  .type-chk .chk-score{ font-size:10px; color:var(--text-muted); font-variant-numeric:tabular-nums; }
+  .mini-field{ display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--text-2); }
+  .mini-field input[type=number]{ width:56px; padding:5px 6px; border-radius:6px; border:1px solid var(--border-strong); background:var(--surface); color:var(--text); }
+
+  .query-row{ display:flex; gap:10px; margin-top:14px; }
+  .query-row input[type=text]{ flex:1; padding:11px 14px; border-radius:9px; border:1px solid var(--border-strong); background:var(--surface); color:var(--text); font-size:14.5px; }
+  .query-row input[type=text]:focus{ outline:2px solid var(--accent); outline-offset:1px; }
+  .btn{ padding:10px 20px; border-radius:9px; border:none; background:var(--accent); color:#fff; font-size:14px; font-weight:600; cursor:pointer; white-space:nowrap; }
+  .btn:disabled{ opacity:.5; cursor:default; }
+  .btn.ghost{ background:transparent; color:var(--accent); border:1px solid var(--accent); }
+
+  /* --- pipeline --- */
+  .pipeline{ display:flex; align-items:stretch; gap:0; overflow-x:auto; padding:6px 0 2px; }
+  .stage{
+    flex:1 1 0; min-width:150px; border:1px solid var(--border); border-radius:10px;
+    padding:10px 12px; background:var(--surface-2); position:relative; cursor:pointer;
+    transition:border-color .15s, background .15s;
+  }
+  .stage + .stage{ margin-left:22px; }
+  .stage::before{
+    content:"→"; position:absolute; left:-19px; top:50%; transform:translateY(-50%);
+    color:var(--border-strong); font-size:14px;
+  }
+  .stage.parallel::before{ content:""; }
+  .stage .n{ font-size:10.5px; font-weight:700; color:var(--text-muted); letter-spacing:.04em; }
+  .stage .t{ font-size:13px; font-weight:700; margin:2px 0 3px; }
+  .stage .d{ font-size:11.5px; color:var(--text-muted); }
+  .stage .badge{
+    display:inline-block; margin-top:6px; font-size:10.5px; font-weight:700; padding:2px 7px;
+    border-radius:99px; background:var(--surface); color:var(--text-muted); border:1px solid var(--border);
+  }
+  .stage.active{ border-color:var(--accent); background:var(--accent-bg); }
+  .stage.active .badge{ background:var(--accent); color:#fff; border-color:var(--accent); }
+  .stage.done .badge{ background:var(--good); color:#fff; border-color:var(--good); }
+  .stage-detail{
+    display:none; margin-top:10px; padding:10px 12px; background:var(--surface-2);
+    border:1px solid var(--border); border-radius:9px; font-size:12.5px; color:var(--text-2);
+  }
+  .stage-detail.show{ display:block; }
+  .stage-detail code, .stage-detail pre{
+    background:var(--surface); border:1px solid var(--border); border-radius:6px;
+    padding:2px 5px; font-size:11.5px; font-family:ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  .stage-detail pre{ padding:8px 10px; overflow-x:auto; white-space:pre; }
+
+  .parallel-wrap{ flex:1 1 0; min-width:150px; display:flex; flex-direction:column; gap:8px; position:relative; }
+  .parallel-wrap::before{ content:"→"; position:absolute; left:-19px; top:50%; transform:translateY(-50%); color:var(--border-strong); font-size:14px; }
+  .parallel-wrap .stage{ flex:1; }
+  .parallel-wrap .stage + .stage{ margin-left:0; }
+
+  /* --- seeds --- */
+  .empty-note{ color:var(--text-muted); font-size:13px; padding:14px 4px; }
+  .seed-list{ display:flex; flex-direction:column; gap:10px; }
+  .seed-card{ border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+  .seed-head{ display:flex; align-items:center; gap:10px; padding:10px 14px; background:var(--surface-2); cursor:pointer; }
+  .rank{ font-size:12px; font-weight:800; color:var(--text-muted); width:22px; }
+  .type-badge{ font-size:10.5px; font-weight:700; padding:2px 8px; border-radius:99px; border:1px solid; }
+  .type-badge.Concept{ color:var(--node-concept-bd); background:var(--node-concept-bg); border-color:var(--node-concept-bd); }
+  .type-badge.Entity{ color:var(--node-entity-bd); background:var(--node-entity-bg); border-color:var(--node-entity-bd); }
+  .type-badge.Paper{ color:var(--node-paper-bd); background:var(--node-paper-bg); border-color:var(--node-paper-bd); }
+  .seed-label{ font-weight:600; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .seed-score{ font-size:11.5px; color:var(--text-muted); font-variant-numeric:tabular-nums; }
+  .score-bar{ height:4px; border-radius:2px; background:var(--border); overflow:hidden; margin-top:2px; }
+  .score-bar i{ display:block; height:100%; background:var(--accent); }
+  .chev{ color:var(--text-muted); font-size:11px; transition:transform .15s; }
+  .seed-card.open .chev{ transform:rotate(90deg); }
+
+  .neighbor-body{ display:none; padding:14px; border-top:1px solid var(--border); }
+  .seed-card.open .neighbor-body{ display:block; }
+  .neigh-section-title{ font-size:11px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:.05em; margin:0 0 8px; }
+  .neigh-section + .neigh-section{ margin-top:16px; }
+  .neigh-grid{ display:flex; flex-wrap:wrap; gap:8px; }
+  .neigh-chip{
+    display:flex; align-items:center; gap:7px; padding:6px 10px 6px 8px; border-radius:9px;
+    border:1px solid var(--border); background:var(--surface-2); font-size:12.5px; max-width:340px;
+  }
+  .neigh-chip .type-dot{ width:8px; height:8px; border-radius:50%; flex:0 0 auto; }
+  .neigh-chip .lbl{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .neigh-chip .rel-tag{
+    font-size:10px; font-weight:700; padding:1px 6px; border-radius:99px; color:#fff; white-space:nowrap;
+  }
+  .neigh-chip .arrow{ font-size:11px; color:var(--text-muted); }
+  .neigh-chip .neigh-score{ font-size:10.5px; color:var(--text-muted); font-variant-numeric:tabular-nums; }
+  .reduce-note{ font-size:11.5px; color:var(--text-muted); margin-bottom:8px; }
+  .hop2-block{ margin-top:8px; padding:8px 10px; border-left:2px solid var(--border-strong); font-size:12px; color:var(--text-2); }
+  .hop2-block .path{ font-size:11.5px; color:var(--text-muted); margin-bottom:6px; }
+
+  /* --- legend --- */
+  .legend-toggle{ font-size:12.5px; color:var(--accent); cursor:pointer; background:none; border:none; padding:0; font-weight:600; }
+  .legend-body{ display:none; margin-top:12px; }
+  .legend-body.show{ display:block; }
+  .legend-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:8px 14px; }
+  .legend-item{ display:flex; gap:8px; font-size:12px; }
+  .legend-item .sw{ width:10px; height:10px; border-radius:2px; margin-top:3px; flex:0 0 auto; }
+  .legend-item b{ font-family:ui-monospace, Menlo, Consolas, monospace; font-size:11.5px; }
+  .legend-item span{ color:var(--text-muted); }
+
+  .raw-toggle{ font-size:12px; color:var(--text-muted); cursor:pointer; background:none; border:none; padding:0; margin-top:10px; text-decoration:underline; }
+  pre.raw{ display:none; margin-top:8px; max-height:280px; overflow:auto; background:var(--surface-2); border:1px solid var(--border); border-radius:8px; padding:10px 12px; font-size:11.5px; }
+  pre.raw.show{ display:block; }
+
+  .footnote{ color:var(--text-muted); font-size:12px; margin-top:26px; text-align:center; }
+  .footnote code{ background:var(--surface-2); padding:1px 6px; border-radius:5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="page">
+    <h1>GraphRAG 검색 흐름 시각화</h1>
+    <p>쿼리 하나가 <b>벡터 검색 + 풀텍스트 검색 → RRF 병합 → 이웃 확장</b>을 거쳐 결과가 되기까지, 실제로 돌고 있는 내 brain 데이터로 확인합니다.</p>
+    <div class="doc-ref">참고: <code>paper_notes/graph_db.py</code>의 <code>search()</code> / <code>docs/mcp/search_flow.md</code></div>
+  </header>
+
+  <section class="card">
+    <h2>연결 설정</h2>
+    <div class="cfg-grid">
+      <div class="field">
+        <label for="baseUrl">API 서버 주소</label>
+        <input type="text" id="baseUrl" placeholder="http://localhost:8123">
+      </div>
+      <div class="field">
+        <label for="brainSel">Brain</label>
+        <select id="brainSel"><option value="">전체 (Brain 무관)</option></select>
+      </div>
+      <div class="field">
+        <label for="topK">top_k (시드 개수)</label>
+        <input type="number" id="topK" value="5" min="1" max="20">
+      </div>
+    </div>
+    <div class="status-row">
+      <span class="dot pending" id="statusDot"></span>
+      <span id="statusText">서버 연결 확인 중…</span>
+    </div>
+    <div class="hint" id="statusHint"></div>
+  </section>
+
+  <section class="card">
+    <h2>검색 흐름 모드</h2>
+    <div class="mode-toggle">
+      <button id="modeBtnCurrent" class="active" type="button">현재 구현 (실제 코드 그대로)</button>
+      <button id="modeBtnImproved" type="button">개선 설계안 (쿼리 인지형 이웃 확장 — 실제 API)</button>
+    </div>
+
+    <div class="improved-panel" id="improvedPanel">
+      <div class="hint" style="margin-bottom:10px;">
+        <code>graph_db.py</code>의 <code>search(mode="routed")</code>를 실제로 호출합니다(<code>docs/mcp/search_flow.md</code>의 "개선 설계안"이 그대로 구현돼 있음) — 관계 타입 라우팅과 이웃 랭킹 점수는 <b>전부 실제 임베딩 코사인 유사도</b>고, 2촌 확장도 <b>같은 요청 한 번 안에서 서버가 실제로 계산</b>해서 내려줍니다. 브라우저에서 다시 계산하는 부분은 없습니다.
+        기본 검색("현재 구현" 모드, <code>mode="all"</code>)은 100% 그대로라서, 이 기능이 있다고 해서 Claude가 실제로 검색할 때의 동작이 바뀌는 건 아닙니다.
+      </div>
+      <div class="row">
+        <div>
+          <div class="hint" style="margin-bottom:6px;">① 관계 타입 라우팅 — 검색을 실행하면 서버가 쿼리 임베딩과 각 타입 설명 임베딩의 코사인 유사도로 상위 3개를 자동 체크합니다(옆 숫자가 실제 유사도 점수). 체크박스를 직접 켜고 끄면 그 뒤로는 검색을 다시 실행해도(또는 아래 설정을 바꿔도) 자동 추천이 덮어쓰지 않고 그 상태로 서버에 그대로 전달됩니다.
+            <span id="autoRouteResetHint" style="display:none;"> — <button type="button" id="autoRouteResetBtn" class="raw-toggle" style="font-size:11.5px;">자동 추천으로 되돌리기</button></span>
+          </div>
+          <div class="type-checks" id="typeChecks"></div>
+        </div>
+      </div>
+      <div class="row" style="margin-top:12px;">
+        <div class="mini-field">② 시드당 semantic 이웃 상한(M):
+          <input type="number" id="capM" value="3" min="1" max="12">
+        </div>
+        <div class="mini-field">
+          <input type="checkbox" id="hop2Chk" checked>
+          ③ 상위 <input type="number" id="hop2N" value="1" min="1" max="2" style="width:40px;"> 개 이웃만 2촌까지 확장 (같은 요청 안에서 서버가 계산)
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="query-row">
+      <input type="text" id="queryInput" placeholder="예: 파이프라인 병렬 학습할 때 통신 비용 어떻게 줄여?">
+      <button class="btn" id="searchBtn" type="button">검색 실행</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>흐름 (클릭하면 단계 설명이 펼쳐집니다)</h2>
+    <div class="pipeline" id="pipeline"></div>
+    <div id="stageDetails"></div>
+  </section>
+
+  <section class="card">
+    <h2>4단계 결과 — RRF 병합 시드 목록</h2>
+    <div id="seedListWrap"><div class="empty-note">쿼리를 입력하고 검색을 눌러보세요.</div></div>
+    <button class="raw-toggle" id="rawToggle" style="display:none;">원본 응답 JSON 보기</button>
+    <pre class="raw" id="rawJson"></pre>
+  </section>
+
+  <section class="card">
+    <h2>관계 타입 범례 <button class="legend-toggle" id="legendToggle">펼치기</button></h2>
+    <div class="legend-body" id="legendBody">
+      <div class="legend-grid" id="legendGrid"></div>
+    </div>
+  </section>
+
+  <div class="footnote">
+    provenance(<code>LINKED_TO</code>) 이웃은 항상 회색 점선 · 방향 없음으로 표시됩니다. semantic(12개 타입) 이웃만 화살표로 방향(outgoing/incoming)을 표시합니다.<br>
+    서버가 꺼져 있다면 AutoNote 루트에서 <code>uvicorn app:app --reload --port 8123</code>로 실행하세요.
+  </div>
+
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ---------------- 12개 semantic 관계 타입 정의 (docs/graph/relation_type.md 기준) ---------------- */
+  var REL_TYPES = [
+    { name:"PART_OF",      group:"hierarchy", symmetric:false, desc:"A가 B의 구성요소다" },
+    { name:"IS_A",         group:"hierarchy", symmetric:false, desc:"A가 B의 구체적 사례/하위 유형이다" },
+    { name:"USES",         group:"usage",     symmetric:false, desc:"A가 B를 도구/구성요소로 사용한다" },
+    { name:"EXTENDS",      group:"usage",     symmetric:false, desc:"A가 B를 확장·발전시킨 후속 연구다" },
+    { name:"IMPROVES_ON",  group:"usage",     symmetric:false, desc:"A가 B보다 개선된 성능/방식으로 제시된다" },
+    { name:"OUTPERFORMS",  group:"compare",   symmetric:false, desc:"A가 B보다 실험적으로 우세하다" },
+    { name:"COMPARED_TO",  group:"compare",   symmetric:true,  desc:"A와 B가 서로 비교 대상이다 (대칭)" },
+    { name:"CONTRADICTS",  group:"compare",   symmetric:true,  desc:"A의 주장/결과가 B와 상충한다 (대칭)" },
+    { name:"SOLVES",       group:"eval",      symmetric:false, desc:"A(방법)가 B(문제)를 해결한다" },
+    { name:"EVALUATED_ON", group:"eval",      symmetric:false, desc:"A가 B(데이터셋/벤치마크)로 검증됐다" },
+    { name:"LIMITED_BY",   group:"eval",      symmetric:false, desc:"A가 B라는 한계를 가진다" },
+    { name:"RELATED",      group:"related",   symmetric:true,  desc:"위 어디에도 안 맞는 약한 연결 (폴백)" }
+  ];
+  var GROUP_COLOR = {
+    hierarchy: "var(--grp-hierarchy)",
+    usage:     "var(--grp-usage)",
+    compare:   "var(--grp-compare)",
+    eval:      "var(--grp-eval)",
+    related:   "var(--grp-related)",
+    provenance:"var(--grp-provenance)"
+  };
+  var REL_BY_NAME = {};
+  REL_TYPES.forEach(function(r){ REL_BY_NAME[r.name] = r; });
+
+  var PIPELINE_STAGES = [
+    { id:"s1", n:"STEP 1", t:"쿼리 임베딩", d:"embed_query()로 쿼리를 벡터화",
+      detail:"paper_notes/embeddings.py의 로컬 임베딩 모델로 쿼리 문자열을 노드 임베딩과 같은 모델·차원으로 벡터화합니다. (embed_query는 질의문 인코딩, embed_passage는 저장 문서 인코딩 — 비대칭 임베딩)" },
+    { id:"s2", n:"STEP 2", t:"벡터 검색", d:"concept_embedding + entity_embedding 인덱스", parallel:true,
+      detail:"<pre>CALL db.index.vector.queryNodes('concept_embedding', k, vec) YIELD node, score\nUNION\nCALL db.index.vector.queryNodes('entity_embedding', k, vec) YIELD node, score</pre>두 인덱스를 UNION으로 합친 뒤 파이썬에서 score 기준 재정렬합니다. 최대 2*top_k개 후보." },
+    { id:"s3", n:"STEP 3", t:"풀텍스트 검색", d:"node_fulltext 인덱스 (Lucene)", parallel:true,
+      detail:"<pre>CALL db.index.fulltext.queryNodes('node_fulltext', q) YIELD node, score\nLIMIT k</pre>display_label / description / note / user_notes 네 필드를 대상으로 Lucene이 토큰 매치·TF-IDF 계열 점수를 매깁니다." },
+    { id:"s4", n:"STEP 4", t:"RRF 병합", d:"순위 기반 병합, k=60",
+      detail:"벡터(코사인 0~1)와 풀텍스트(Lucene, 상한 없음) 점수는 스케일이 달라 그대로 못 더칩니다. 각 리스트 안에서의 <code>순위</code>만 보고 <code>score += 1/(60+rank)</code>를 두 리스트에서 각각 더한 뒤 내림차순 정렬 → 상위 top_k개가 최종 시드." },
+    { id:"s5", n:"STEP 5", t:"이웃 확장", d:"시드마다 1촌 이웃 (LINKED_TO + semantic 12종)",
+      detail:"<pre>MATCH (n:{type} {slug:$slug})\nOPTIONAL MATCH (n)-[r]-(neighbor)</pre>타입 미지정·무방향 패턴이라 provenance(LINKED_TO)와 semantic 12종을 한 번에 훑습니다. relation/direction은 LINKED_TO일 땐 null, semantic일 땐 채워집니다(direction: startNode(r)=n이면 outgoing)." }
+  ];
+
+  /* ---------------- 상태 ---------------- */
+  var state = {
+    mode: "current",
+    lastResults: null,
+    baseUrl: localStorage.getItem("sfv_baseUrl") || "http://localhost:8123",
+    brainId: localStorage.getItem("sfv_brainId") || "",
+    // 자동 관계 타입 라우팅(서버가 실제로 계산해 응답에 담아 보내는 routed_types)이
+    // 체크박스를 계속 덮어써도 되는지. 사용자가 체크박스를 하나라도 직접 클릭하면
+    // false로 내려가서, 그 뒤로는 재검색을 해도 applyRoutedTypesToCheckboxes()가
+    // 체크 상태 자체는 손대지 않고 점수 라벨만 "수동"으로 표시한다 - "직접 켜고 끌
+    // 수 있다"는 문구가 실제로 지켜지게 하려면 자동 추천이 매 재검색마다 사용자의
+    // 수동 선택을 되돌리면 안 된다.
+    autoRouteEnabled: true,
+    // 검색 실행 없이 체크박스/M/2촌 설정만 바꿔도 서버에 실제로 재요청해서 결과를
+    // 바로 다시 그릴 때, 사용자가 펼쳐서 보고 있던 시드 카드가 접혀버리지 않도록
+    // 열린 시드의 "type:slug" 키를 기억해둔다.
+    openSeeds: new Set()
+  };
+
+  /* ---------------- DOM 준비 ---------------- */
+  var $ = function(id){ return document.getElementById(id); };
+
+  function buildPipeline(){
+    var wrap = $("pipeline");
+    wrap.innerHTML = "";
+    var i = 0;
+    while (i < PIPELINE_STAGES.length){
+      var st = PIPELINE_STAGES[i];
+      if (st.parallel){
+        var pwrap = document.createElement("div");
+        pwrap.className = "parallel-wrap";
+        while (i < PIPELINE_STAGES.length && PIPELINE_STAGES[i].parallel){
+          pwrap.appendChild(makeStageEl(PIPELINE_STAGES[i]));
+          i++;
+        }
+        wrap.appendChild(pwrap);
+      } else {
+        wrap.appendChild(makeStageEl(st));
+        i++;
+      }
+    }
+  }
+  function makeStageEl(st){
+    var el = document.createElement("div");
+    el.className = "stage";
+    el.id = "stage-" + st.id;
+    el.innerHTML =
+      '<div class="n">' + st.n + '</div>' +
+      '<div class="t">' + st.t + '</div>' +
+      '<div class="d">' + st.d + '</div>' +
+      '<span class="badge">대기</span>';
+    el.addEventListener("click", function(){ toggleDetail(st); });
+    return el;
+  }
+  function toggleDetail(st){
+    var host = $("stageDetails");
+    var existing = document.getElementById("detail-" + st.id);
+    if (existing){ existing.remove(); return; }
+    Array.prototype.forEach.call(host.querySelectorAll(".stage-detail"), function(n){ n.remove(); });
+    var d = document.createElement("div");
+    d.id = "detail-" + st.id;
+    d.className = "stage-detail show";
+    d.innerHTML = "<b>" + st.t + "</b> — " + st.detail;
+    host.appendChild(d);
+  }
+  function setStage(id, status){ // 'idle' | 'active' | 'done'
+    var el = $("stage-" + id);
+    if (!el) return;
+    el.classList.remove("active","done");
+    var badge = el.querySelector(".badge");
+    if (status === "active"){ el.classList.add("active"); badge.textContent = "진행중"; }
+    else if (status === "done"){ el.classList.add("done"); badge.textContent = "완료"; }
+    else { badge.textContent = "대기"; }
+  }
+  function resetPipeline(){ PIPELINE_STAGES.forEach(function(s){ setStage(s.id, "idle"); }); }
+
+  function buildLegend(){
+    var grid = $("legendGrid");
+    grid.innerHTML = "";
+    var prov = document.createElement("div");
+    prov.className = "legend-item";
+    prov.innerHTML = '<span class="sw" style="background:var(--grp-provenance);"></span><div><b>LINKED_TO</b><br><span>provenance(출처) — 항상 회색 점선, 방향 표시 없음</span></div>';
+    grid.appendChild(prov);
+    REL_TYPES.forEach(function(r){
+      var it = document.createElement("div");
+      it.className = "legend-item";
+      it.innerHTML = '<span class="sw" style="background:' + GROUP_COLOR[r.group] + ';"></span><div><b>' + r.name + '</b>' + (r.symmetric ? ' <span style="font-size:10px;">(대칭)</span>' : '') + '<br><span>' + r.desc + '</span></div>';
+      grid.appendChild(it);
+    });
+  }
+
+  // 검색 실행을 다시 누르지 않아도, 개선 설계안 모드에서 관계 타입 체크박스 /
+  // M(상한) / 2촌 확장 설정 중 뭐든 바뀌면 즉시 서버에 /api/graph-search?mode=routed를
+  // 다시 물어서(state.lastResults를 브라우저에서 재계산하는 게 아니라, 실제 라우팅·
+  // 랭킹·2촌 확장을 서버가 새 설정으로 다시 계산한 응답을 받아서) 화면에 반영한다.
+  // 로컬 서버 + 로컬 임베딩 모델이라 비용은 없다.
+  var refetchTimer = null;
+  function refetchAndRender(){
+    var query = $("queryInput").value.trim();
+    if (!query || !state.lastResults) return; // 아직 첫 검색 전이면 할 게 없음
+    fetchAndRender(query).catch(function(err){
+      $("seedListWrap").innerHTML = '<div class="empty-note" style="color:var(--bad);">재검색 실패: ' + escapeHtml(err.message) + '</div>';
+    });
+  }
+  // 숫자 입력(M, 2촌 개수)은 타이핑 중에도 input 이벤트가 계속 발생하므로, 매 타
+  // 이핑마다 요청을 쏘지 않도록 약간의 디바운스를 둔다.
+  function debouncedRefetch(){
+    clearTimeout(refetchTimer);
+    refetchTimer = setTimeout(refetchAndRender, 350);
+  }
+
+  function buildTypeChecks(){
+    var host = $("typeChecks");
+    host.innerHTML = "";
+    REL_TYPES.forEach(function(r){
+      var wrap = document.createElement("label");
+      wrap.className = "type-chk";
+      wrap.innerHTML =
+        '<input type="checkbox" id="chk-' + r.name + '" checked>' +
+        '<span class="sw" style="background:' + GROUP_COLOR[r.group] + ';"></span>' +
+        '<span>' + r.name + '</span>' +
+        '<span class="chk-score" id="chkscore-' + r.name + '"></span>';
+      host.appendChild(wrap);
+    });
+    // 체크박스를 하나라도 직접 건드리면 자동 라우팅을 끈다(사용자의 수동 선택을
+    // 존중) - "자동 추천으로 되돌리기" 버튼으로만 다시 켤 수 있다. 그리고 검색을
+    // 다시 누를 필요 없이 서버에 바로 재검색을 물어서 결과에 반영한다.
+    host.querySelectorAll('input[type=checkbox]').forEach(function(chk){
+      chk.addEventListener("change", function(){
+        state.autoRouteEnabled = false;
+        $("autoRouteResetHint").style.display = "inline";
+        refetchAndRender();
+      });
+    });
+  }
+
+  // 서버가 실제로 계산한 routed_types(쿼리 임베딩 ↔ 타입 설명 임베딩의 코사인
+  // 유사도, 상위 3개)를 응답에서 그대로 읽어서 체크박스 상태/점수 라벨에 반영한다.
+  // 자동 추천이 켜져 있을 때만 체크 상태 자체를 덮어쓰고, 사용자가 수동으로 끈
+  // 상태에서는 체크는 건드리지 않되 "수동"이라고 표시한다.
+  function applyRoutedTypesToCheckboxes(results){
+    if (state.mode !== "improved") return;
+    var routedTypes = (results && results[0] && results[0].routed_types) || {};
+    REL_TYPES.forEach(function(r){
+      var chk = $("chk-" + r.name);
+      var scoreEl = $("chkscore-" + r.name);
+      if (!chk) return;
+      var hasScore = Object.prototype.hasOwnProperty.call(routedTypes, r.name);
+      if (state.autoRouteEnabled) chk.checked = hasScore;
+      if (scoreEl){
+        scoreEl.textContent = hasScore ? routedTypes[r.name].toFixed(3)
+          : (state.autoRouteEnabled ? "" : "수동");
+      }
+    });
+  }
+
+  function resetToAutoRoute(){
+    state.autoRouteEnabled = true;
+    $("autoRouteResetHint").style.display = "none";
+    refetchAndRender();
+  }
+
+  /* ---------------- 서버 연결 ---------------- */
+  function currentBase(){ return ($("baseUrl").value || "").replace(/\/+$/, ""); }
+
+  function checkConnection(){
+    var base = currentBase();
+    var dot = $("statusDot"), text = $("statusText"), hint = $("statusHint");
+    dot.className = "dot pending"; text.textContent = "서버 연결 확인 중…"; hint.textContent = "";
+    if (!base){ dot.className = "dot bad"; text.textContent = "서버 주소를 입력하세요."; return; }
+
+    var ctrl = new AbortController();
+    var to = setTimeout(function(){ ctrl.abort(); }, 5000);
+    fetch(base + "/api/brains", { signal: ctrl.signal })
+      .then(function(r){ if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+      .then(function(data){
+        clearTimeout(to);
+        dot.className = "dot ok"; text.textContent = "서버 연결됨";
+        var sel = $("brainSel");
+        var prev = sel.value || state.brainId;
+        sel.innerHTML = '<option value="">전체 (Brain 무관)</option>';
+        (data.brains || []).forEach(function(b){
+          var opt = document.createElement("option");
+          opt.value = b.id; opt.textContent = b.name + " (" + (b.paper_slugs ? b.paper_slugs.length : 0) + "개 논문)";
+          sel.appendChild(opt);
+        });
+        if (prev) sel.value = prev;
+      })
+      .catch(function(err){
+        clearTimeout(to);
+        dot.className = "dot bad"; text.textContent = "서버에 연결할 수 없음";
+        hint.textContent = "CORS 또는 서버 미실행일 수 있습니다. AutoNote 루트에서 uvicorn app:app --reload --port 8123 로 실행하고, app.py에 CORS가 열려 있는지 확인하세요. (" + err.message + ")";
+      });
+  }
+
+  /* ---------------- 검색 요청 파라미터 / 실행 ---------------- */
+  // 현재 UI 상태(모드, top_k, brain, 관계 타입 체크박스, M, 2촌 여부)를 실제
+  // /api/graph-search 쿼리 파라미터로 그대로 옮긴다. "현재 구현" 모드는 mode=all
+  // (파라미터를 안 준 것과 완전히 동일 — 서버 쪽 하위호환 보장), "개선 설계안"
+  // 모드는 mode=routed. 자동 라우팅이 켜져 있으면 relation_types를 아예 안 보내서
+  // 서버가 쿼리 임베딩으로 직접 라우팅하게 하고, 사용자가 체크박스를 수동으로
+  // 건드린 뒤에는 그 목록을 그대로 relation_types로 넘긴다.
+  function currentSearchParams(){
+    var p = {
+      topK: parseInt($("topK").value, 10) || 5,
+      brainId: $("brainSel").value
+    };
+    if (state.mode === "improved"){
+      p.mode = "routed";
+      p.neighborCap = Math.max(1, parseInt($("capM").value, 10) || 3);
+      p.hop2TopN = $("hop2Chk").checked ? Math.max(1, Math.min(2, parseInt($("hop2N").value, 10) || 1)) : 0;
+      if (!state.autoRouteEnabled){
+        p.relationTypes = REL_TYPES
+          .filter(function(r){ var chk = $("chk-" + r.name); return chk && chk.checked; })
+          .map(function(r){ return r.name; });
+      }
+    } else {
+      p.mode = "all";
+    }
+    return p;
+  }
+
+  function apiSearch(query, opts){
+    opts = opts || {};
+    var params = new URLSearchParams();
+    params.set("q", query);
+    params.set("top_k", String(opts.topK || 5));
+    if (opts.brainId) params.set("brain_id", opts.brainId);
+    if (opts.mode) params.set("mode", opts.mode);
+    if (opts.relationTypes && opts.relationTypes.length) params.set("relation_types", opts.relationTypes.join(","));
+    if (typeof opts.neighborCap === "number") params.set("neighbor_cap", String(opts.neighborCap));
+    if (typeof opts.hop2TopN === "number") params.set("hop2_top_n", String(opts.hop2TopN));
+    return fetch(currentBase() + "/api/graph-search?" + params.toString())
+      .then(function(r){
+        if (!r.ok){
+          return r.json().catch(function(){ return {}; }).then(function(body){
+            throw new Error((body && body.detail) || ("HTTP " + r.status));
+          });
+        }
+        return r.json();
+      })
+      .then(function(data){ return data.results || []; });
+  }
+
+  // 실제 네트워크 요청 한 번으로 (필요하면 mode=routed의 실제 라우팅/랭킹/2촌
+  // 확장까지) 서버에서 계산해 받아온 뒤 화면을 갱신하는 공용 함수. runSearch()의
+  // 최초 검색과 refetchAndRender()의 설정-변경 재검색이 모두 이걸 쓴다.
+  function fetchAndRender(query){
+    var params = currentSearchParams();
+    return apiSearch(query, params).then(function(results){
+      state.lastResults = results;
+      applyRoutedTypesToCheckboxes(results);
+      renderSeedList(results, query);
+      $("rawToggle").style.display = "inline";
+      $("rawJson").textContent = JSON.stringify(results, null, 2);
+      return results;
+    });
+  }
+
+  function sleep(ms){ return new Promise(function(res){ setTimeout(res, ms); }); }
+
+  function runSearch(){
+    var query = $("queryInput").value.trim();
+    if (!query){ $("queryInput").focus(); return; }
+    localStorage.setItem("sfv_baseUrl", currentBase());
+    localStorage.setItem("sfv_brainId", $("brainSel").value);
+
+    $("searchBtn").disabled = true;
+    resetPipeline();
+    $("seedListWrap").innerHTML = '<div class="empty-note">검색 중…</div>';
+    $("rawToggle").style.display = "none";
+    $("rawJson").classList.remove("show");
+
+    setStage("s1", "active");
+    sleep(300)
+      .then(function(){ setStage("s1","done"); setStage("s2","active"); setStage("s3","active"); return sleep(300); })
+      .then(function(){ return fetchAndRender(query); })
+      .then(function(){
+        setStage("s2","done"); setStage("s3","done"); setStage("s4","active");
+        return sleep(200);
+      })
+      .then(function(){
+        setStage("s4","done"); setStage("s5","active");
+        return sleep(150);
+      })
+      .then(function(){ setStage("s5","done"); })
+      .catch(function(err){
+        $("seedListWrap").innerHTML = '<div class="empty-note" style="color:var(--bad);">검색 실패: ' + escapeHtml(err.message) + '</div>';
+        resetPipeline();
+      })
+      .then(function(){ $("searchBtn").disabled = false; });
+  }
+
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, function(c){
+      return { "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c];
+    });
+  }
+
+  /* ---------------- 시드/이웃 렌더링 ---------------- */
+  function renderSeedList(results, query){
+    var wrap = $("seedListWrap");
+    wrap.innerHTML = "";
+    if (!results.length){
+      wrap.innerHTML = '<div class="empty-note">시드가 없습니다. (인덱스에 매치되는 concept/entity가 없거나 이 Brain 범위에 데이터가 없을 수 있습니다)</div>';
+      return;
+    }
+    var maxScore = Math.max.apply(null, results.map(function(r){ return r.score || 0; })) || 1;
+
+    results.forEach(function(seed, idx){
+      var key = seed.type + ":" + seed.slug;
+      var card = document.createElement("div");
+      card.className = "seed-card";
+      // 체크박스/M/2촌 설정을 바꿀 때마다 이 함수가 통째로 다시 그리는데, 그때마다
+      // 펼쳐놨던 카드가 접혀버리면 "방금 보고 있던 이웃이 실시간으로 바뀌는" 걸
+      // 확인할 수가 없다 - 어떤 시드가 열려 있었는지 state.openSeeds에 기억해뒀다가
+      // 다시 그릴 때 그대로 펼친 채로 만든다.
+      if (state.openSeeds.has(key)) card.classList.add("open");
+
+      var head = document.createElement("div");
+      head.className = "seed-head";
+      head.innerHTML =
+        '<span class="rank">#' + (idx+1) + '</span>' +
+        '<span class="type-badge ' + seed.type + '">' + seed.type + '</span>' +
+        '<div style="flex:1; min-width:0;">' +
+          '<div class="seed-label">' + escapeHtml(seed.label || seed.slug) + '</div>' +
+          '<div class="score-bar"><i style="width:' + Math.max(4, Math.round((seed.score||0)/maxScore*100)) + '%;"></i></div>' +
+        '</div>' +
+        '<span class="seed-score">RRF ' + (seed.score||0).toFixed(4) + '</span>' +
+        '<span class="chev">▶</span>';
+      head.addEventListener("click", function(){
+        var isOpen = card.classList.toggle("open");
+        if (isOpen) state.openSeeds.add(key); else state.openSeeds.delete(key);
+      });
+      card.appendChild(head);
+
+      var body = document.createElement("div");
+      body.className = "neighbor-body";
+      body.appendChild(renderNeighbors(seed));
+      card.appendChild(body);
+
+      wrap.appendChild(card);
+    });
+  }
+
+  function neighChip(n, opts){
+    opts = opts || {};
+    var chip = document.createElement("div");
+    chip.className = "neigh-chip";
+    var dotColor = n.relation ? GROUP_COLOR[(REL_BY_NAME[n.relation]||{}).group || "related"] : GROUP_COLOR.provenance;
+    var arrow = "";
+    if (n.relation){
+      arrow = n.direction === "incoming" ? "←" : "→";
+    }
+    chip.innerHTML =
+      '<span class="type-dot" style="background:' + dotColor + ';"></span>' +
+      '<span class="type-badge ' + n.type + '" style="font-size:9.5px; padding:1px 5px;">' + n.type + '</span>' +
+      '<span class="lbl" title="' + escapeHtml(n.label || n.slug) + '">' + escapeHtml(n.label || n.slug) + '</span>' +
+      (n.relation ? '<span class="arrow">' + arrow + '</span><span class="rel-tag" style="background:' + dotColor + ';">' + n.relation + '</span>' : '') +
+      (typeof opts.score === "number" ? '<span class="neigh-score">' + opts.score.toFixed(3) + '</span>' : '');
+    return chip;
+  }
+
+  // provenance/semantic 이웃 목록 하나를 "섹션 제목 + (선택) 안내문 + 칩 그리드"로
+  // 그려주는 공용 헬퍼. "현재 구현"/"개선 설계안" 두 모드 모두 이걸로 렌더링해서
+  // 마크업이 흩어지지 않게 한다.
+  function neighSection(title, items, opts){
+    opts = opts || {};
+    var sec = document.createElement("div");
+    sec.className = "neigh-section";
+    var titleEl = document.createElement("div");
+    titleEl.className = "neigh-section-title";
+    titleEl.textContent = title;
+    sec.appendChild(titleEl);
+    if (opts.note){
+      var note = document.createElement("div");
+      note.className = "reduce-note";
+      note.textContent = opts.note;
+      sec.appendChild(note);
+    }
+    var grid = document.createElement("div");
+    grid.className = "neigh-grid";
+    if (!items.length){
+      grid.innerHTML = '<span class="hint">' + (opts.emptyText || "없음") + '</span>';
+    } else {
+      items.forEach(function(n){ grid.appendChild(neighChip(n, opts.chipOpts ? opts.chipOpts(n) : {})); });
+    }
+    sec.appendChild(grid);
+    return sec;
+  }
+
+  function renderNeighbors(seed){
+    var host = document.createElement("div");
+
+    if (state.mode === "current"){
+      // mode=all — 서버가 예전 그대로 시드 하나당 flat neighbors[]를 내려준다
+      // (LINKED_TO/semantic 뒤섞여 있고 필터 없음). 클라이언트는 relation 유무로
+      // provenance/semantic만 나눠서 보여준다.
+      var neighbors = seed.neighbors || [];
+      var provenance = neighbors.filter(function(n){ return !n.relation; });
+      var semantic = neighbors.filter(function(n){ return !!n.relation; });
+      host.appendChild(neighSection("provenance 이웃 (LINKED_TO · " + provenance.length + "개)", provenance));
+      host.appendChild(neighSection("semantic 이웃 (12종 전체 · " + semantic.length + "개, 필터 없음)", semantic));
+      return host;
+    }
+
+    // mode=routed — 관계 타입 라우팅, 코사인 유사도 랭킹, 시드당 상한(M), 2촌
+    // 확장까지 전부 서버가 이 한 번의 요청 안에서 실제로 계산해서 내려준 결과를
+    // 그대로 렌더링한다. 브라우저에서 다시 계산하는 부분은 없다.
+    var provenance = seed.provenance_neighbors || [];
+    var semantic = seed.semantic_neighbors || [];
+    var routedTypes = seed.routed_types || {};
+    var totalBefore = typeof seed.semantic_total_before_cap === "number" ? seed.semantic_total_before_cap : semantic.length;
+    var routedNames = Object.keys(routedTypes);
+
+    host.appendChild(neighSection("provenance 이웃 (LINKED_TO · " + provenance.length + "개)", provenance));
+
+    var note = "라우팅된 타입: " + (routedNames.length ? routedNames.join(", ") : "없음") +
+      " · 이웃 " + totalBefore + "개 → 상위 " + semantic.length + "개로 축소 (실제 임베딩 코사인 유사도 랭킹, type_score×similarity)";
+    host.appendChild(neighSection(
+      "semantic 이웃 (개선안 · 상위 " + semantic.length + "개, 실제 점수순)",
+      semantic,
+      { note: note, emptyText: "라우팅된 타입에 해당하는 이웃이 없습니다.", chipOpts: function(n){ return { score: n.score }; } }
+    ));
+
+    var hop2Items = semantic.filter(function(n){ return n.hop2 && n.hop2.length; });
+    if (hop2Items.length){
+      var hop2Sec = document.createElement("div");
+      hop2Sec.className = "neigh-section";
+      var hop2Title = document.createElement("div");
+      hop2Title.className = "neigh-section-title";
+      hop2Title.textContent = "2촌 확장 (같은 요청 안에서 서버가 실제로 계산)";
+      hop2Sec.appendChild(hop2Title);
+      hop2Items.forEach(function(item){
+        var arrow = item.direction === "incoming" ? "←" : "→";
+        var block = document.createElement("div");
+        block.className = "hop2-block";
+        var pathEl = document.createElement("div");
+        pathEl.className = "path";
+        pathEl.textContent = seed.label + " " + arrow + " [" + item.relation + "] " + arrow + " " + item.label;
+        block.appendChild(pathEl);
+        var grid = document.createElement("div");
+        grid.className = "neigh-grid";
+        item.hop2.forEach(function(n){ grid.appendChild(neighChip(n, { score: n.score })); });
+        block.appendChild(grid);
+        hop2Sec.appendChild(block);
+      });
+      host.appendChild(hop2Sec);
+    } else if ($("hop2Chk").checked){
+      host.appendChild(neighSection("2촌 확장 (같은 요청 안에서 서버가 실제로 계산)", [], { emptyText:"2촌으로 확장된 이웃이 없습니다." }));
+    }
+
+    return host;
+  }
+
+  /* ---------------- 이벤트 바인딩 ---------------- */
+  function bindEvents(){
+    $("baseUrl").value = state.baseUrl;
+    $("baseUrl").addEventListener("change", checkConnection);
+    $("brainSel").addEventListener("change", function(){ localStorage.setItem("sfv_brainId", $("brainSel").value); });
+
+    $("modeBtnCurrent").addEventListener("click", function(){ setMode("current"); });
+    $("modeBtnImproved").addEventListener("click", function(){ setMode("improved"); });
+
+    $("searchBtn").addEventListener("click", runSearch);
+    $("queryInput").addEventListener("keydown", function(e){ if (e.key === "Enter") runSearch(); });
+
+    $("legendToggle").addEventListener("click", function(){
+      var body = $("legendBody");
+      body.classList.toggle("show");
+      $("legendToggle").textContent = body.classList.contains("show") ? "접기" : "펼치기";
+    });
+    $("rawToggle").addEventListener("click", function(){
+      var pre = $("rawJson");
+      pre.classList.toggle("show");
+      $("rawToggle").textContent = pre.classList.contains("show") ? "원본 응답 JSON 숨기기" : "원본 응답 JSON 보기";
+    });
+    $("autoRouteResetBtn").addEventListener("click", resetToAutoRoute);
+
+    // M(상한)/2촌 확장 설정도 검색을 다시 누를 필요 없이 서버에 실제로 재요청해서
+    // 바로 반영한다(숫자 입력은 타이핑 중 과도한 요청을 막기 위해 디바운스).
+    $("capM").addEventListener("input", debouncedRefetch);
+    $("hop2Chk").addEventListener("change", refetchAndRender);
+    $("hop2N").addEventListener("input", debouncedRefetch);
+  }
+
+  function setMode(mode){
+    state.mode = mode;
+    $("modeBtnCurrent").classList.toggle("active", mode === "current");
+    $("modeBtnImproved").classList.toggle("active", mode === "improved");
+    $("improvedPanel").classList.toggle("show", mode === "improved");
+    // 응답 모양 자체가 mode=all/mode=routed로 다르기 때문에, 캐시된 이전 결과를
+    // 다시 그리는 게 아니라 새 모드로 실제 재요청을 보낸다.
+    refetchAndRender();
+  }
+
+  /* ---------------- 초기화 ---------------- */
+  buildPipeline();
+  buildLegend();
+  buildTypeChecks();
+  bindEvents();
+  if (state.brainId) { /* select 채워진 뒤 checkConnection에서 복원 */ }
+  checkConnection();
+})();
+</script>
+</body>
+</html>

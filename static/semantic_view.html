@@ -47,6 +47,33 @@
   }
   .back-link:hover { background: var(--accent-soft); border-color: var(--accent); }
   .swatch { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+  /* 노드 검색: static/graph.css의 .graph-search-* 패턴을 이 파일 자체의 CSS
+     변수(--accent/--border/--surface 등)로 옮긴 것. */
+  .graph-search-wrap { position: relative; margin-left: auto; flex-shrink: 0; }
+  .graph-search-input {
+    width: 150px; font: inherit; font-size: 12px; padding: 4px 10px;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: var(--surface); color: var(--text); outline: none;
+    transition: border-color .15s ease, width .15s ease;
+  }
+  .graph-search-input:focus { border-color: var(--accent); width: 210px; }
+  .graph-search-results {
+    display: none; position: absolute; top: 100%; right: 0; margin-top: 6px; z-index: 25;
+    width: 240px; max-height: 260px; overflow-y: auto;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: var(--surface); box-shadow: 0 6px 20px rgba(0,0,0,.18); padding: 4px;
+  }
+  .graph-search-results.open { display: block; }
+  .graph-search-result {
+    width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    background: none; border: none; text-align: left; font: inherit; font-size: 13px;
+    color: var(--text); padding: 7px 8px; border-radius: 6px; cursor: pointer;
+  }
+  .graph-search-result:hover { background: var(--accent-soft); color: var(--accent); }
+  .graph-search-result-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .graph-search-result-type { flex-shrink: 0; font-size: 11px; color: var(--text-muted); }
+  .graph-search-result:hover .graph-search-result-type { color: inherit; }
+  .graph-search-empty { font-size: 12.5px; color: var(--text-muted); padding: 7px 8px; }
   label.toggle { display: inline-flex; align-items: center; gap: 4px; color: var(--text-muted); cursor: pointer; }
   #network { position: absolute; top: 46px; left: 0; right: 320px; bottom: 0; }
   #panel {
@@ -84,6 +111,48 @@
   #ctx-menu .item:hover { background: var(--accent-soft); color: var(--accent); }
   #ctx-menu .item.disabled { color: var(--text-muted); cursor: default; }
   #ctx-menu .item.disabled:hover { background: none; }
+
+  /* 노드 클릭 시 파일(마크다운) 내용을 보여주는 읽기 전용 오버레이 - graph.js의
+     node-mode 패널(static/graph.css)과 같은 마크업/스타일을 이 파일 자체의 CSS
+     변수로 옮긴 것. 여기서는 별칭/카테고리 편집이나 개인 메모 편집은 지원하지
+     않고 내용만 보여준다. */
+  #nodeViewOverlay {
+    display: none; position: absolute; top: 46px; left: 0; right: 320px; bottom: 0;
+    background: var(--bg); z-index: 12; overflow-y: auto; padding: 24px 28px; box-sizing: border-box;
+  }
+  #nodeViewOverlay.show { display: block; }
+  #nodeViewOverlay .back-link { display: inline-flex; margin-bottom: 16px; }
+  .node-view-title, .node-view-meta, .node-view-body, .node-view-usernotes {
+    max-width: 720px; margin-left: auto; margin-right: auto;
+  }
+  .node-view-title { font-size: 1.1rem; font-weight: 650; margin-bottom: 4px; }
+  .node-view-meta { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: .78rem; color: var(--text-muted); margin-bottom: 16px; }
+  .node-view-meta span { white-space: nowrap; }
+  .node-view-body { font-size: .88rem; line-height: 1.65; color: var(--text); }
+  .node-view-body .md-h2 { font-size: 1rem; font-weight: 650; margin: 18px 0 8px; }
+  .node-view-body .md-h3 { font-size: .92rem; font-weight: 650; margin: 14px 0 6px; color: var(--text-muted); }
+  .node-view-body .md-p { margin: 0 0 10px; }
+  .node-view-body .md-ul, .node-view-body .md-ol { margin: 0 0 10px; padding-left: 20px; }
+  .node-view-body .md-hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+  .node-view-body .md-wikilink { color: var(--accent); font-weight: 500; }
+  .node-view-body .md-wikilink[data-node-type="concept"] { color: var(--entity-blue); }
+  .node-view-body .md-wikilink[data-node-type="entity"] { color: var(--text-muted); }
+  .node-view-body .md-wikilink.md-wikilink-clickable { cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+  .node-view-body .md-wikilink.md-wikilink-clickable:hover { opacity: .75; }
+  .node-view-body .md-img { max-width: 100%; border-radius: 8px; border: 1px solid var(--border); margin: 4px 0 10px; display: block; }
+  .node-view-body .md-link { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+  .node-view-body .md-link:hover { color: var(--accent-hover); }
+  .node-view-body .md-table-wrap { overflow-x: auto; margin: 0 0 12px; }
+  .node-view-body .md-table { border-collapse: collapse; width: 100%; font-size: .82rem; }
+  .node-view-body .md-table th, .node-view-body .md-table td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; vertical-align: top; }
+  .node-view-body .md-table th { background: var(--surface); font-weight: 650; white-space: nowrap; }
+  .node-view-body .md-blockquote { margin: 0 0 12px; padding: 8px 14px; border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 0 8px 8px 0; }
+  .node-view-body .md-blockquote p { margin: 0; }
+  .node-view-body .md-blockquote p + p { margin-top: 6px; }
+  .node-view-body .md-code { margin: 0 0 12px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow-x: auto; font-size: .8rem; line-height: 1.5; }
+  .node-view-body .md-code code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .node-view-body pre.mermaid { margin: 0 0 12px; padding: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow-x: auto; font-size: .78rem; color: var(--text-muted); white-space: pre-wrap; }
+  .node-view-usernotes { margin-top: 28px; padding-top: 16px; border-top: 1px solid var(--border); }
 </style>
 </head>
 <body>
@@ -99,7 +168,10 @@
   <span class="legend-item">색깔 실선 = semantic 관계(화살표=방향, 없음=대칭)</span>
   <label class="toggle"><input type="checkbox" id="toggleTags" checked /> 태그 표시</label>
   <label class="toggle"><input type="checkbox" id="toggleAttachments" /> 첨부파일 표시</label>
-  <span style="flex:1"></span>
+  <div class="graph-search-wrap">
+    <input type="text" id="semSearchInput" class="graph-search-input" placeholder="노드 검색..." autocomplete="off" />
+    <div id="semSearchResults" class="graph-search-results"></div>
+  </div>
   <span id="loadingLabel" class="legend-item"></span>
 </div>
 <div id="network"></div>
@@ -136,6 +208,10 @@
 </div>
 <div id="toast"></div>
 <div id="ctx-menu"></div>
+<div id="nodeViewOverlay">
+  <a href="#" id="btnCloseNodeView" class="back-link">&larr; 그래프로 돌아가기</a>
+  <div id="nodeViewBody"></div>
+</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/standalone/umd/vis-network.min.js"></script>
 <script>
@@ -404,10 +480,20 @@
         document.getElementById('btnDelete').style.display = 'none';
         document.getElementById('selectedInfo').textContent =
           `[${node.__type}] ${node.label}` + (node.__node_slug ? `\nslug: ${node.__node_slug}` : '\n(아직 노드 파일 없음)');
+
+        // 그래프 뷰(graph.js의 handleNodeClick)와 같은 조건: note는 id가 곧 논문
+        // slug라 항상 열 수 있고, concept/entity는 node_store에 실제 노드 파일이
+        // 있을 때만(node_slug) 열 수 있다. tag/attachment는 md 파일이 없어 그대로 둔다.
+        if (node.__type === 'note') {
+          openNodeView('note', node.id, node.label);
+        } else if ((node.__type === 'concept' || node.__type === 'entity') && node.__node_slug) {
+          openNodeView(node.__type, node.__node_slug, node.label);
+        }
       });
     } else {
       network.setData({ nodes: nodesDS, edges: edgesDS });
     }
+    reapplySemSearch();
   }
 
   function selectEdgeInfo(edge) {
@@ -475,8 +561,348 @@
     }
   });
 
+  // ---- 노드 검색 ----
+  // static/graph.js의 검색 UI/동작(부분일치 하이라이트, 결과 드롭다운, Enter로
+  // 첫 매치 포커스)과 같은 패턴을 vis-network API로 옮긴 것. vis-network는
+  // 노드엔 top-level opacity를, 에지엔 color.opacity를 쓴다(서로 다른 API라
+  // 에지는 기존 color 객체를 보존한 채 opacity만 덧씌운다 - 그냥 옵션 하나만
+  // update()로 보내면 color 객체 전체가 그 값으로 덮어써져서 relation 색이
+  // 날아간다).
+  const NODE_TYPE_SEARCH_LABELS = { note: '논문', concept: '개념', entity: '용어', tag: '태그', attachment: '첨부' };
+  const semSearchInput = document.getElementById('semSearchInput');
+  const semSearchResultsEl = document.getElementById('semSearchResults');
+
+  function matchSemanticNodes(query) {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    return nodesDS.get({ filter: (n) => (n.label || '').toLowerCase().includes(q) });
+  }
+
+  function setEdgesOpacity(op) {
+    edgesDS.update(edgesDS.get().map((e) => ({ id: e.id, color: Object.assign({}, e.color, { opacity: op }) })));
+  }
+
+  function clearSemSearchHighlight() {
+    nodesDS.update(nodesDS.getIds().map((id) => ({ id, opacity: 1 })));
+    setEdgesOpacity(1);
+    if (network) network.unselectAll();
+  }
+
+  function applySemSearchHighlight(matchedIds) {
+    if (!matchedIds.size) { clearSemSearchHighlight(); return; }
+    nodesDS.update(nodesDS.getIds().map((id) => ({ id, opacity: matchedIds.has(id) ? 1 : 0.15 })));
+    // 에지는 어느 쪽이든 전부 흐리게 둔다 - 지금은 "노드 찾기"가 목적이라
+    // 에지 자체를 강조할 필요는 없다(static/graph.js와 동일한 판단).
+    setEdgesOpacity(0.15);
+  }
+
+  // toggleTags/toggleAttachments 변경이나 관계 생성/삭제로 loadGraph()가 다시
+  // 돌면 nodesDS/edgesDS가 통째로 새로 채워져 하이라이트가 풀린다 - 검색어가
+  // 남아있으면 다시 걸어준다.
+  function reapplySemSearch() {
+    const q = semSearchInput ? semSearchInput.value.trim() : '';
+    if (!q) return;
+    applySemSearchHighlight(new Set(matchSemanticNodes(q).map((n) => n.id)));
+  }
+
+  function renderSemSearchResults(matches) {
+    if (!matches.length) {
+      semSearchResultsEl.innerHTML = '<div class="graph-search-empty">일치하는 노드가 없습니다.</div>';
+      semSearchResultsEl.classList.add('open');
+      return;
+    }
+    semSearchResultsEl.innerHTML = '';
+    matches.slice(0, 12).forEach((n) => {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'graph-search-result';
+      item.innerHTML = `<span class="graph-search-result-label">${escapeHtml(n.label)}</span><span class="graph-search-result-type">${NODE_TYPE_SEARCH_LABELS[n.__type] || n.__type}</span>`;
+      item.addEventListener('click', () => focusSemSearchResult(n));
+      semSearchResultsEl.appendChild(item);
+    });
+    semSearchResultsEl.classList.add('open');
+  }
+
+  function focusSemSearchResult(n) {
+    applySemSearchHighlight(new Set([n.id]));
+    if (network) {
+      network.focus(n.id, { scale: 1.0, animation: { duration: 400, easingFunction: 'easeInOutQuad' } });
+      network.selectNodes([n.id]);
+    }
+    semSearchResultsEl.classList.remove('open');
+  }
+
+  function clearSemSearch() {
+    semSearchInput.value = '';
+    semSearchResultsEl.innerHTML = '';
+    semSearchResultsEl.classList.remove('open');
+    clearSemSearchHighlight();
+  }
+
+  if (semSearchInput) {
+    semSearchInput.addEventListener('input', () => {
+      if (!semSearchInput.value.trim()) { clearSemSearch(); return; }
+      const matches = matchSemanticNodes(semSearchInput.value);
+      applySemSearchHighlight(new Set(matches.map((n) => n.id)));
+      renderSemSearchResults(matches);
+    });
+    semSearchInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') { clearSemSearch(); semSearchInput.blur(); return; }
+      if (event.key === 'Enter') {
+        const matches = matchSemanticNodes(semSearchInput.value);
+        if (matches.length) focusSemSearchResult(matches[0]);
+      }
+    });
+    document.addEventListener('click', (event) => {
+      if (!event.target.closest('.graph-search-wrap')) semSearchResultsEl.classList.remove('open');
+    });
+  }
+
   document.getElementById('toggleTags').addEventListener('change', (e) => { showTags = e.target.checked; loadGraph(); });
   document.getElementById('toggleAttachments').addEventListener('change', (e) => { showAttachments = e.target.checked; loadGraph(); });
+
+  // ---------------- 노드 클릭 -> 파일(마크다운) 읽기 전용 보기 ----------------
+  // static/graph.js의 node-mode 패널과 같은 API(/api/nodes/{type}/{slug})와 같은
+  // 렌더링 규칙(renderMarkdown 이하, graph.js에서 그대로 옮김)을 쓴다. 다만 여기서는
+  // 별칭/카테고리 추가삭제, 이름변경, 개인 메모 편집, 노드 삭제는 지원하지 않고
+  // 내용만 읽기 전용으로 보여준다.
+  function attachmentUrl(path) {
+    return /^https?:\/\//.test(path) || path.startsWith('/') ? path : `/${path}`;
+  }
+
+  function renderInline(text, links) {
+    let html = escapeHtml(text);
+    const stashed = [];
+    const stash = (fragment) => {
+      const token = `\uE000${stashed.length}\uE001`;
+      stashed.push(fragment);
+      return token;
+    };
+    html = html.replace(/\*\*(.+?)\*\*/g, (_, inner) => stash(`<strong>${inner}</strong>`));
+    html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_, alt, src) =>
+      stash(`<img class="md-img" src="${attachmentUrl(src)}" alt="${alt}">`));
+    html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, (_, label, url) =>
+      stash(`<a class="md-link" href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>`));
+    html = html.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, target, display) => {
+      const label = display || target;
+      const trimmedTarget = target.trim();
+      const resolved = links?.[trimmedTarget];
+      if (resolved) {
+        return stash(`<span class="md-wikilink md-wikilink-clickable" data-node-type="${resolved.type}" data-node-slug="${escapeHtml(resolved.slug)}">${label}</span>`);
+      }
+      return stash(`<span class="md-wikilink">${label}</span>`);
+    });
+    html = html.replace(/(https?:\/\/[^\s<>()]+)/g, (url) =>
+      stash(`<a class="md-link" href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`));
+    return html.replace(/\uE000(\d+)\uE001/g, (_, i) => stashed[Number(i)]);
+  }
+
+  function splitTableRow(line) {
+    const trimmed = line.trim().replace(/^\|/, '').replace(/\|\s*$/, '');
+    return trimmed.split(/(?<!\\)\|/).map((cell) => cell.trim().replace(/\\\|/g, '|'));
+  }
+  function isTableSeparatorRow(line) {
+    return /^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?$/.test(line.trim());
+  }
+
+  function buildNestedListHtml(items, links) {
+    let i = 0;
+    const render = (baseIndent) => {
+      let out = '';
+      while (i < items.length && items[i].indent >= baseIndent) {
+        if (items[i].indent > baseIndent) { out += render(items[i].indent); continue; }
+        const type = items[i].type;
+        let inner = '';
+        while (i < items.length && items[i].indent === baseIndent && items[i].type === type) {
+          const content = renderInline(items[i].content, links);
+          i++;
+          const nested = (i < items.length && items[i].indent > baseIndent) ? render(items[i].indent) : '';
+          inner += `<li>${content}${nested}</li>`;
+        }
+        out += `<${type === 'ol' ? 'ol' : 'ul'} class="md-${type}">${inner}</${type === 'ol' ? 'ol' : 'ul'}>`;
+      }
+      return out;
+    };
+    return render(items[0].indent);
+  }
+
+  function renderMarkdown(markdown, links = {}) {
+    const parts = [];
+    let bqOpen = false;
+    let paragraph = [];
+    let tableBuffer = [];
+    let codeFenceLang = null;
+    let codeLines = [];
+
+    const flushParagraph = () => {
+      if (paragraph.length) {
+        parts.push(`<p class="md-p">${renderInline(paragraph.join(' '), links)}</p>`);
+        paragraph = [];
+      }
+    };
+    const closeBlockquote = () => { if (bqOpen) { parts.push('</blockquote>'); bqOpen = false; } };
+    const flushTable = () => {
+      if (!tableBuffer.length) return;
+      if (tableBuffer.length >= 2 && isTableSeparatorRow(tableBuffer[1])) {
+        const header = splitTableRow(tableBuffer[0]);
+        const bodyRows = tableBuffer.slice(2).map(splitTableRow);
+        parts.push(
+          '<div class="md-table-wrap"><table class="md-table"><thead><tr>' +
+          header.map((h) => `<th>${renderInline(h, links)}</th>`).join('') +
+          '</tr></thead><tbody>' +
+          bodyRows.map((row) => '<tr>' + row.map((c) => `<td>${renderInline(c, links)}</td>`).join('') + '</tr>').join('') +
+          '</tbody></table></div>'
+        );
+      } else {
+        parts.push(`<p class="md-p">${renderInline(tableBuffer.join(' '), links)}</p>`);
+      }
+      tableBuffer = [];
+    };
+    const flushAll = () => { flushParagraph(); closeBlockquote(); flushTable(); };
+
+    const listItemRe = /^(\s*)([-*]|\d+\.)\s+(.*)$/;
+    const lines = markdown.split('\n');
+    for (let idx = 0; idx < lines.length; idx++) {
+      const rawLine = lines[idx];
+      const line = rawLine.trim();
+
+      const fence = line.match(/^```\s*(\w*)\s*$/);
+      if (codeFenceLang !== null) {
+        if (fence) {
+          const escaped = escapeHtml(codeLines.join('\n'));
+          parts.push(
+            codeFenceLang === 'mermaid'
+              ? `<pre class="mermaid">${escaped}</pre>`
+              : `<pre class="md-code"><code>${escaped}</code></pre>`
+          );
+          codeFenceLang = null;
+          codeLines = [];
+        } else {
+          codeLines.push(rawLine);
+        }
+        continue;
+      }
+      if (fence) { flushAll(); codeFenceLang = fence[1] || 'text'; continue; }
+
+      if (line.startsWith('<!--')) {
+        flushAll();
+        if (line.includes('user-notes')) parts.push('<div class="md-h3">개인 메모</div>');
+        continue;
+      }
+      if (!line) { flushAll(); continue; }
+      if (line === '---') { flushAll(); parts.push('<hr class="md-hr">'); continue; }
+
+      const h3 = line.match(/^###\s+(.*)$/);
+      if (h3) { flushAll(); parts.push(`<div class="md-h3">${renderInline(h3[1], links)}</div>`); continue; }
+      const h2 = line.match(/^##\s+(.*)$/);
+      if (h2) { flushAll(); parts.push(`<div class="md-h2">${renderInline(h2[1], links)}</div>`); continue; }
+      const h1 = line.match(/^#\s+(.*)$/);
+      if (h1) { flushAll(); parts.push(`<div class="md-h2">${renderInline(h1[1], links)}</div>`); continue; }
+
+      if (line.startsWith('|') && line.endsWith('|')) {
+        flushParagraph(); closeBlockquote();
+        tableBuffer.push(line);
+        continue;
+      }
+      flushTable();
+
+      const bq = line.match(/^>\s?(.*)$/);
+      if (bq) {
+        flushParagraph();
+        if (!bqOpen) { parts.push('<blockquote class="md-blockquote">'); bqOpen = true; }
+        parts.push(`<p>${renderInline(bq[1], links)}</p>`);
+        continue;
+      }
+      closeBlockquote();
+
+      if (listItemRe.test(rawLine)) {
+        flushParagraph();
+        const items = [];
+        while (idx < lines.length) {
+          const m = listItemRe.exec(lines[idx]);
+          if (!m) break;
+          items.push({ indent: m[1].length, type: /\d/.test(m[2]) ? 'ol' : 'ul', content: m[3] });
+          idx++;
+        }
+        idx--;
+        parts.push(buildNestedListHtml(items, links));
+        continue;
+      }
+
+      paragraph.push(line);
+    }
+    flushAll();
+    return parts.join('\n');
+  }
+
+  async function openNodeView(type, slug, fallbackLabel) {
+    const overlay = document.getElementById('nodeViewOverlay');
+    const bodyEl = document.getElementById('nodeViewBody');
+    bodyEl.innerHTML = `<div class="node-view-title">${escapeHtml(fallbackLabel)}</div><p class="node-view-body">불러오는 중...</p>`;
+    overlay.classList.add('show');
+
+    let data;
+    try {
+      const res = await fetch(`/api/nodes/${type}/${encodeURIComponent(slug)}`);
+      if (!res.ok) throw new Error('not ok');
+      data = await res.json();
+    } catch {
+      bodyEl.innerHTML = `<div class="node-view-title">${escapeHtml(fallbackLabel)}</div><p class="node-view-body">노트를 불러오지 못했습니다.</p>`;
+      return;
+    }
+
+    const metaChips = [];
+    if (data.type === 'note') {
+      if (data.meta.authors) metaChips.push(`<span>저자: ${escapeHtml(data.meta.authors)}</span>`);
+      if (data.meta.tags?.length) metaChips.push(`<span>${escapeHtml(data.meta.tags.map((t) => '#' + t).join(' '))}</span>`);
+    } else {
+      if (data.meta.aliases?.length) metaChips.push(`<span>다른 표기: ${escapeHtml(data.meta.aliases.join(', '))}</span>`);
+      if (data.meta.categories?.length) metaChips.push(`<span>카테고리: ${escapeHtml(data.meta.categories.join(', '))}</span>`);
+      const sourceCount = (data.meta.sources || []).filter((s) => s.slug).length;
+      metaChips.push(`<span>등장 논문 ${sourceCount}편</span>`);
+    }
+
+    // concept/entity는 위 메타 줄(다른 표기/카테고리/등장 논문)이 이미 auto_markdown
+    // 맨 앞과 같은 정보를 보여주므로, graph.js의 편집 가능 노드 뷰와 똑같은 정규식으로
+    // 그 preamble을 걷어내고 본문(실제 등장 논문 목록/설명)부터만 보여준다 - 안 그러면
+    // "다른 표기"/"등장 논문 N편"이 메타 줄과 본문에 두 번 나온다.
+    const editableType = data.type === 'concept' || data.type === 'entity';
+    const bodyMarkdown = editableType
+      ? (data.auto_markdown || '').replace(
+          /^#[^\n]*\n\n\*\*다른 표기\*\*:[^\n]*\n\n(?:\*\*카테고리\*\*:[^\n]*\n\n)?\*\*등장 논문\*\*[^\n]*\n/,
+          ''
+        )
+      : (data.body_markdown || '').replace(/^#\s+.*(\n+|$)/, '');
+    const userMarkdown = (data.user_markdown || '').trim();
+
+    bodyEl.innerHTML = `
+      <div class="node-view-title">${escapeHtml(data.title)}</div>
+      <div class="node-view-meta">${metaChips.join('')}</div>
+      <div class="node-view-body">${renderMarkdown(bodyMarkdown, data.links)}</div>
+      ${userMarkdown ? `
+        <div class="node-view-usernotes">
+          <div class="md-h3">개인 메모</div>
+          <div class="node-view-body">${renderMarkdown(userMarkdown, data.links)}</div>
+        </div>
+      ` : ''}
+    `;
+  }
+
+  document.getElementById('btnCloseNodeView').addEventListener('click', (e) => {
+    e.preventDefault();
+    document.getElementById('nodeViewOverlay').classList.remove('show');
+  });
+  // 본문은 매번 innerHTML을 통째로 새로 그리므로(openNodeView), 위키링크마다 개별
+  // 리스너를 다는 대신 안 바뀌는 부모 컨테이너에 이벤트 위임 하나만 걸어둔다
+  // (graph.js의 #nodeModeBody 위임과 같은 패턴).
+  document.getElementById('nodeViewBody').addEventListener('click', (event) => {
+    const link = event.target.closest('.md-wikilink-clickable');
+    if (!link) return;
+    openNodeView(link.dataset.nodeType, link.dataset.nodeSlug, link.textContent);
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') document.getElementById('nodeViewOverlay').classList.remove('show');
+  });
 
   (async function init() {
     showTags = document.getElementById('toggleTags').checked;

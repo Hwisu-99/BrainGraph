@@ -13,6 +13,7 @@ from pathlib import Path
 import yaml
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -83,6 +84,16 @@ from paper_notes.utils import slugify
 load_dotenv()
 
 app = FastAPI(title="AutoNote Paper Summarizer")
+
+# test/search_flow_visualizer.html처럼 이 서버와 다른 origin(파일로 직접 열거나
+# 별도 포트)에서 API를 호출하는 로컬 개발용 페이지를 위해 CORS를 연다. 이 앱은
+# 인증 없이 로컬(localhost)에서만 도는 개인용 툴이라 광범위 허용의 위험이 낮다.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["GET"],
+    allow_headers=["*"],
+)
 
 
 def get_vault_path() -> str:
@@ -816,13 +827,34 @@ async def post_merge_brains(loser_id: str, survivor_id: str, background_tasks: B
 
 
 @app.get("/api/graph-search")
-async def get_graph_search(q: str, top_k: int = 10, brain_id: str | None = None):
+async def get_graph_search(
+    q: str,
+    top_k: int = 10,
+    brain_id: str | None = None,
+    mode: str = "all",
+    relation_types: str | None = Query(None, description="콤마로 구분된 관계 타입 목록. mode=routed에서만 쓰이고, 안 주면 쿼리 기반 자동 라우팅."),
+    neighbor_cap: int = 5,
+    hop2_top_n: int = 0,
+):
     """GraphRAG 하이브리드 검색(벡터+풀텍스트+그래프 확장, paper_notes/graph_db.py
     참고) - MCP 서버의 search_graph 툴이 그대로 감싸서 쓴다. brain_id를 주면
     그 Brain에 속한 Paper/Concept/Entity로만 결과를 좁힌다(graph_db.search()의
-    brain_id 필터 참고)."""
+    brain_id 필터 참고).
+
+    mode="all"(기본값)이면 지금까지와 완전히 동일하다 - mode/relation_types/
+    neighbor_cap/hop2_top_n을 아무도 모르던 예전 호출(MCP search_graph 포함)도
+    그대로 동작한다. mode="routed"는 docs/mcp/search_flow.md의 "개선
+    설계안"(test/search_flow_visualizer.html이 쓴다) - graph_db.search()의
+    같은 이름 파라미터를 그대로 넘긴다."""
     try:
-        return {"results": graph_db_search(q, top_k, brain_id)}
+        rel_types_list = [t.strip() for t in relation_types.split(",") if t.strip()] if relation_types else None
+        return {
+            "results": graph_db_search(
+                q, top_k, brain_id,
+                mode=mode, relation_types=rel_types_list,
+                neighbor_cap=neighbor_cap, hop2_top_n=hop2_top_n,
+            )
+        }
     except Neo4jNotConfigured as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 

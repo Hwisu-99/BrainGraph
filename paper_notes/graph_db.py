@@ -17,13 +17,14 @@ Neo4j 하나로 구성한다.
 """
 from __future__ import annotations
 
+import math
 import os
 import threading
 
 from paper_notes.embeddings import embed_passage, embed_query, embedding_dimension
 from paper_notes.brains import get_paper_brain_id
 from paper_notes.node_store import NODE_STORE_ROOT, get_relations, get_user_section, list_nodes
-from paper_notes.relation_types import load_relation_types
+from paper_notes.relation_types import describe_relation_type, load_relation_types
 
 _driver = None
 _driver_lock = threading.Lock()
@@ -409,7 +410,141 @@ def _reciprocal_rank_fusion(*ranked_lists: list[dict]) -> list[dict]:
     return sorted(fused.values(), key=lambda h: h["score"], reverse=True)
 
 
-def search(query: str, top_k: int = 10, brain_id: str | None = None) -> list[dict]:
+# ---- 쿼리 인지형 이웃 확장 (search(mode="routed")) ----
+# docs/mcp/search_flow.md의 "개선 설계안" - LINKED_TO(provenance)는 그대로 두고,
+# semantic 12종만 쿼리와 관련도 높은 타입으로 골라서 확장한다. mode="all"
+# (기본값, 기존 동작)은 이 아래 함수들을 전혀 안 타므로 MCP search_graph나
+# 기존 /api/graph-search 호출자는 아무 영향이 없다 - 새 파라미터를 명시적으로
+# 줘야만(mode="routed") 이 경로를 탄다.
+
+_type_embed_cache: dict[str, list[float]] = {}
+_type_embed_cache_lock = threading.Lock()
+
+
+def _type_embedding(rel_type: str) -> list[float]:
+    """관계 타입 하나의 임베딩(이름 + 한글 설명) - 프로세스 전역에 캐싱한다.
+    12개뿐이라 계산 비용 자체는 무시할 만하지만, 검색마다 다시 계산할 이유가
+    없다."""
+    if rel_type not in _type_embed_cache:
+        with _type_embed_cache_lock:
+            if rel_type not in _type_embed_cache:
+                _type_embed_cache[rel_type] = embed_passage(f"{rel_type}: {describe_relation_type(rel_type)}")
+    return _type_embed_cache[rel_type]
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    if not a or not b:
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(y * y for y in b))
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
+def _route_relation_types(query_vec: list[float], whitelist: list[str], top_n: int = 3) -> dict[str, float]:
+    """쿼리 임베딩과 각 관계 타입 설명 임베딩의 코사인 유사도로 top_n개(+
+    점수)를 고른다 - 진짜 임베딩 기반(test/search_flow_visualizer.html의 예전
+    클라이언트 사이드 텍스트 겹침 데모를 대체하는 실제 구현). 전부 낮은
+    점수여도 top_n개는 반환한다 - 아예 안 걸리는 것보단 그나마 가까운
+    것들이라도 이웃을 보여주는 게 낫다는 판단."""
+    scored = sorted(
+        ((t, _cosine(query_vec, _type_embedding(t))) for t in whitelist),
+        key=lambda pair: pair[1], reverse=True,
+    )
+    return dict(scored[:top_n])
+
+
+def _ranked_semantic_neighbors(
+    session, node_type: str, slug: str, brain_id: str | None,
+    routed_types: dict[str, float], query_vec: list[float],
+) -> list[dict]:
+    """한 노드의 semantic 이웃 중 routed_types(화이트리스트 검증된 타입만 -
+    Cypher는 관계 타입을 파라미터로 못 받아 문자열 보간이 필요하므로,
+    호출부에서 이미 알려진 타입인지 검증된 것만 여기 들어온다)에 해당하는
+    것만 뽑아서, (관계 타입 관련도 점수) x (이웃 자신의 임베딩과 쿼리의 코사인
+    유사도) 점수로 내림차순 정렬해 돌려준다. routed_types가 비어 있으면
+    빈 리스트."""
+    if not routed_types:
+        return []
+    type_clause = "|".join(sorted(routed_types.keys()))
+    rows = session.run(
+        f"""
+        MATCH (n:{node_type} {{slug: $slug}})-[r:{type_clause}]-(neighbor)
+        WHERE $brain_id IS NULL OR $brain_id IN neighbor.brain_ids
+        RETURN neighbor.slug AS slug, labels(neighbor)[0] AS type, neighbor.display_label AS label,
+               neighbor.embedding AS embedding, type(r) AS relation,
+               CASE WHEN startNode(r) = n THEN 'outgoing' ELSE 'incoming' END AS direction
+        """,
+        slug=slug,
+        brain_id=brain_id,
+    ).data()
+    scored = []
+    for row in rows:
+        if not row["slug"]:
+            continue
+        type_score = routed_types.get(row["relation"], 0.0)
+        similarity = _cosine(query_vec, row["embedding"] or [])
+        scored.append({
+            "slug": row["slug"], "type": row["type"], "label": row["label"],
+            "relation": row["relation"], "direction": row["direction"],
+            "score": round(type_score * similarity, 4),
+        })
+    scored.sort(key=lambda item: item["score"], reverse=True)
+    return scored
+
+
+def _expand_routed_neighbors(
+    session, seed: dict, brain_id: str | None, routed_types: dict[str, float],
+    neighbor_cap: int, hop2_top_n: int, query_vec: list[float],
+) -> dict:
+    """한 시드의 provenance(항상 전부) + semantic(routed_types로 거르고 랭킹
+    후 상한 neighbor_cap) 이웃을 만든다. semantic 상위 hop2_top_n개는 그
+    이웃 자신을 기준으로 한 번 더(2촌) 같은 방식으로 확장해서 "hop2" 필드에
+    실어준다(2촌은 같은 routed_types를 재사용 - 원래 쿼리 의도에서 벗어나지
+    않게 하기 위함, 새로 자동 라우팅하지 않는다)."""
+    provenance_rows = session.run(
+        f"""
+        MATCH (n:{seed['type']} {{slug: $slug}})
+        OPTIONAL MATCH (n)-[r:LINKED_TO]-(neighbor)
+        WHERE neighbor IS NULL
+           OR $brain_id IS NULL
+           OR ('Paper' IN labels(neighbor) AND neighbor.brain_id = $brain_id)
+           OR (NOT 'Paper' IN labels(neighbor) AND $brain_id IN neighbor.brain_ids)
+        RETURN neighbor.slug AS slug, labels(neighbor)[0] AS type,
+               CASE WHEN 'Paper' IN labels(neighbor) THEN neighbor.title ELSE neighbor.display_label END AS label
+        """,
+        slug=seed["slug"],
+        brain_id=brain_id,
+    ).data()
+    provenance = [
+        {"slug": n["slug"], "type": n["type"], "label": n["label"], "relation": None, "direction": None}
+        for n in provenance_rows if n["slug"]
+    ]
+
+    semantic = _ranked_semantic_neighbors(session, seed["type"], seed["slug"], brain_id, routed_types, query_vec)
+    capped = semantic[:max(1, neighbor_cap)]
+
+    for item in capped[:max(0, hop2_top_n)]:
+        item["hop2"] = _ranked_semantic_neighbors(
+            session, item["type"], item["slug"], brain_id, routed_types, query_vec
+        )[:max(1, neighbor_cap)]
+
+    # neighbor_cap으로 잘리기 전 원래 개수 - "N개 -> M개로 축소" 같은 안내를
+    # 만들 때 필요해서 같이 돌려준다(자르고 나면 원래 개수를 알 방법이 없다).
+    return {"provenance": provenance, "semantic": capped, "semantic_total_before_cap": len(semantic)}
+
+
+def search(
+    query: str,
+    top_k: int = 10,
+    brain_id: str | None = None,
+    mode: str = "all",
+    relation_types: list[str] | None = None,
+    neighbor_cap: int = 5,
+    hop2_top_n: int = 0,
+) -> list[dict]:
     """하이브리드 그래프 검색 - 벡터 유사도 + 풀텍스트 매치로 시드 노드를 찾고,
     각 시드에서 1촌 이웃까지 같이 반환한다(그래프 확장). GraphRAG의 핵심
     함수 - MCP의 search_graph 툴이 이걸 그대로 노출한다.
@@ -423,9 +558,34 @@ def search(query: str, top_k: int = 10, brain_id: str | None = None) -> list[dic
     논문에서만 나온 것처럼" 필터링 - Brain을 concept/entity 파일 자체가 아니라
     조회 시점에 계산하는 설계라, 다른 Brain에서 같은 개념을 검색하면 그 Brain
     범위로 다시 필터링된 채로 똑같이 보일 수 있다). brain_id=None(기본값)이면
-    지금까지와 동일하게 전체 범위에서 검색한다."""
+    지금까지와 동일하게 전체 범위에서 검색한다.
+
+    mode="all"(기본값)은 지금까지와 완전히 동일하게 동작한다(LINKED_TO +
+    semantic 12종을 구분 없이 전부 1촌까지, 응답 형태도 "neighbors"[] 그대로) -
+    아래 relation_types/neighbor_cap/hop2_top_n은 이때 전부 무시된다. 기존
+    호출자(MCP search_graph, /api/graph-search의 기본 호출)는 이 함수
+    시그니처가 바뀌었다는 것조차 몰라도 된다.
+
+    mode="routed"면 docs/mcp/search_flow.md의 "개선 설계안"대로 동작한다:
+    LINKED_TO(provenance)는 그대로 전부 반환하고, semantic 이웃만
+    relation_types로 거른다. relation_types를 안 주면 쿼리 임베딩과 관계
+    타입 설명 임베딩의 코사인 유사도로 자동 라우팅(top 3)한다. 남은 semantic
+    이웃은 (타입 관련도) x (이웃 임베딩과 쿼리의 코사인 유사도)로 랭킹해서
+    시드당 상위 neighbor_cap개만 남기고, 그중 상위 hop2_top_n개는 한 번 더
+    (2촌) 같은 방식으로 확장한다("hop2" 필드). 이 모드의 응답은 시드마다
+    "neighbors" 대신 "provenance_neighbors"/"semantic_neighbors"/
+    "routed_types"를 담는다."""
     driver = get_driver()
     query_vec = embed_query(query)
+
+    routed_types: dict[str, float] = {}
+    if mode == "routed":
+        known_types = list(load_relation_types(NODE_STORE_ROOT).keys())
+        if relation_types:
+            # 화이트리스트 검증: 여기서 걸러진 것만 밑에서 Cypher에 보간된다.
+            routed_types = {t: 1.0 for t in relation_types if t in known_types}
+        else:
+            routed_types = _route_relation_types(query_vec, known_types, top_n=3)
 
     with driver.session() as session:
         # db.index.vector.queryNodes는 최신 Neo4j에서 새 SEARCH 문법으로 대체
@@ -466,6 +626,22 @@ def search(query: str, top_k: int = 10, brain_id: str | None = None) -> list[dic
 
         results = []
         for seed in top_seeds:
+            if mode == "routed":
+                expanded = _expand_routed_neighbors(
+                    session, seed, brain_id, routed_types, neighbor_cap, hop2_top_n, query_vec
+                )
+                results.append({
+                    "slug": seed["slug"],
+                    "type": seed["type"],
+                    "label": seed["label"],
+                    "score": seed["score"],
+                    "provenance_neighbors": expanded["provenance"],
+                    "semantic_neighbors": expanded["semantic"],
+                    "semantic_total_before_cap": expanded["semantic_total_before_cap"],
+                    "routed_types": routed_types,
+                })
+                continue
+
             # -[r]- (타입 미지정, 무방향)로 바꿔서 LINKED_TO(출처)와 semantic
             # 관계(PART_OF/EXTENDS/... - docs/description/relation_types.md)를
             # 한 번에 같이 훑는다. Cypher는 -[r:TYPE1|TYPE2|...]- 처럼 명시적
