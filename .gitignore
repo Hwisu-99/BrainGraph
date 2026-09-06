@@ -23,3 +23,7 @@ __pycache__/
 /_concepts
 /_entities
 /attachments
+
+# 실사용 검색 쿼리와 결과가 그대로 남는 개인 데이터(paper_notes/traversal_log.py가
+# 기록) - 버전관리 제외
+/logs/

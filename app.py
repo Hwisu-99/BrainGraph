@@ -7,6 +7,7 @@ import json
 import os
 import re
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -68,6 +69,7 @@ from paper_notes.graph_db import retag_paper_brain as _gdb_retag_paper_brain
 from paper_notes.graph_db import search as graph_db_search
 from paper_notes.graph_db import sync_node as _gdb_sync_node
 from paper_notes.graph_db import sync_paper as _gdb_sync_paper
+from paper_notes.traversal_log import delete_traversal_log_entry, log_traversal, read_traversal_log
 from paper_notes.obsidian_writer import delete_note as delete_local_note
 from paper_notes.obsidian_writer import write_note, write_summary_json
 from paper_notes.paper_folders import (
@@ -88,10 +90,15 @@ app = FastAPI(title="AutoNote Paper Summarizer")
 # test/search_flow_visualizer.html처럼 이 서버와 다른 origin(파일로 직접 열거나
 # 별도 포트)에서 API를 호출하는 로컬 개발용 페이지를 위해 CORS를 연다. 이 앱은
 # 인증 없이 로컬(localhost)에서만 도는 개인용 툴이라 광범위 허용의 위험이 낮다.
+# DELETE는 로그 히스토리의 "삭제" 버튼(DELETE /api/traversal-logs)이 크로스
+# 오리진으로 호출하면서 추가됨 - GET 외의 메서드는 브라우저가 먼저 OPTIONS
+# 프리플라이트를 보내는데, allow_methods에 없으면 이게 그냥 막혀서(400) 실제
+# DELETE 요청은 나가보지도 못한다. 새 메서드를 크로스 오리진으로 호출하게
+# 되면 여기도 같이 늘려야 한다.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET"],
+    allow_methods=["GET", "DELETE"],
     allow_headers=["*"],
 )
 
@@ -828,6 +835,7 @@ async def post_merge_brains(loser_id: str, survivor_id: str, background_tasks: B
 
 @app.get("/api/graph-search")
 async def get_graph_search(
+    request: Request,
     q: str,
     top_k: int = 10,
     brain_id: str | None = None,
@@ -845,18 +853,63 @@ async def get_graph_search(
     neighbor_cap/hop2_top_n을 아무도 모르던 예전 호출(MCP search_graph 포함)도
     그대로 동작한다. mode="routed"는 docs/mcp/search_flow.md의 "개선
     설계안"(test/search_flow_visualizer.html이 쓴다) - graph_db.search()의
-    같은 이름 파라미터를 그대로 넘긴다."""
+    같은 이름 파라미터를 그대로 넘긴다.
+
+    호출 하나마다 traversal_log.log_traversal()로 logs/traversal_log.jsonl에 기록된다 -
+    mcp_server.py가 모든 요청에 붙이는 X-AutoNote-Source: mcp 헤더로 Claude가 실제
+    대화 중 search_graph를 호출한 것(실사용)과 그 외(이 헤더 없이 들어오는 모든
+    웹 호출 - 시각화 툴 테스트 포함)을 source 필드로 구분해 남긴다.
+    로깅 실패가 검색 응답 자체를 망가뜨리지 않도록 log_traversal()이 내부에서
+    예외를 흡수한다.
+
+    응답에 "results"뿐 아니라 "reasoning"도 담긴다(graph_db.search()가
+    이제 (results, reasoning) 튜플을 반환한다) - 별칭/이름이 그대로 매치된
+    노드(강제 시드 포함), 질문 표현 패턴으로 추정한 관계 타입(의도 분류),
+    별칭이 2개 이상 매칭됐을 때의 최단 경로 탐색 결과, 그리고 이 모든 걸
+    합친 한 줄 요약을 담는다 - "어떤 노드/엣지가 뽑혔는지"뿐 아니라 "왜
+    그렇게 뽑혔는지"를 보여주기 위함이다. results의 각 시드에도
+    seed_source("embedding"/"alias"/"both")가 추가로 붙는다."""
     try:
         rel_types_list = [t.strip() for t in relation_types.split(",") if t.strip()] if relation_types else None
-        return {
-            "results": graph_db_search(
-                q, top_k, brain_id,
-                mode=mode, relation_types=rel_types_list,
-                neighbor_cap=neighbor_cap, hop2_top_n=hop2_top_n,
-            )
-        }
+        started = time.perf_counter()
+        results, reasoning = graph_db_search(
+            q, top_k, brain_id,
+            mode=mode, relation_types=rel_types_list,
+            neighbor_cap=neighbor_cap, hop2_top_n=hop2_top_n,
+        )
+        duration_ms = (time.perf_counter() - started) * 1000
+        log_traversal(
+            query=q, mode=mode, top_k=top_k, brain_id=brain_id,
+            relation_types_requested=rel_types_list,
+            neighbor_cap=neighbor_cap, hop2_top_n=hop2_top_n,
+            results=results,
+            source=request.headers.get("x-autonote-source", "web"),
+            duration_ms=duration_ms,
+            reasoning=reasoning,
+        )
+        return {"results": results, "reasoning": reasoning}
     except Neo4jNotConfigured as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/api/traversal-logs")
+async def get_traversal_logs(limit: int = 50, source: str | None = None, mode: str | None = None):
+    """test/search_flow_visualizer.html의 "로그 히스토리" 탭이 쓰는 조회 API - 실제
+    /api/graph-search 호출(MCP search_graph 포함)마다 남겨진 traversal_log.jsonl을
+    최신순으로 최대 limit개 반환한다. source="mcp"로 좁히면 Claude가 실제 대화
+    중에 실제로 쓴 검색만, source="web"이면 브라우저(시각화 툴 테스트 포함)에서 날린
+    것만 남는다."""
+    return {"entries": read_traversal_log(limit=limit, source=source, mode=mode)}
+
+
+@app.delete("/api/traversal-logs")
+async def delete_traversal_log(ts: str):
+    """test/search_flow_visualizer.html의 "로그 히스토리"에서 항목 하나를 지울 때
+    쓴다 - ts(그 로그 엔트리의 timestamp, 마이크로초까지 있어 사실상 고유한 값)로
+    식별한다. 지운 게 있으면 {"deleted": true}, 이미 없었으면(중복 클릭 등)
+    {"deleted": false}를 반환한다 - 어느 쪽이든 200으로 응답하고 404를 쓰지 않는다
+    (삭제는 멱등이어야 하고, 프런트엔드도 이미 없는 걸 에러로 취급할 이유가 없다)."""
+    return {"deleted": delete_traversal_log_entry(ts)}
 
 
 @app.get("/api/concepts")

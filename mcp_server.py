@@ -44,7 +44,12 @@ mcp = MCPServer(
 
 
 def _client(timeout: float = 30.0) -> httpx.Client:
-    return httpx.Client(base_url=API_BASE, timeout=timeout)
+    """AutoNote API(app.py)로 보내는 모든 요청에 X-AutoNote-Source: mcp 헤더를 붙인다 -
+    app.py의 /api/graph-search가 이 헤더로 실제 Claude 대화 중 호출(실사용)과
+    그 외 웹 호출(시각화 툴 테스트 포함)을 구분해 traversal_log.jsonl에 남긴다."""
+    return httpx.Client(
+        base_url=API_BASE, timeout=timeout, headers={"X-AutoNote-Source": "mcp"}
+    )
 
 
 def _unwrap(resp: httpx.Response) -> dict:
@@ -85,7 +90,22 @@ def search_graph(query: str, top_k: int = 10, brain: str | None = None) -> dict:
     단, COMPARED_TO/CONTRADICTS/RELATED는 원래 방향이 없는 대칭 관계라서,
     direction 값(outgoing/incoming)은 저장 시점에 어느 쪽이 정규화 소유자가
     됐는지를 반영할 뿐 실제 의미는 아니다 - 이 세 타입은 direction을 무시하고
-    "A와 B가 비교된다/상충한다/관련 있다"처럼 방향 없이 서술하라."""
+    "A와 B가 비교된다/상충한다/관련 있다"처럼 방향 없이 서술하라.
+
+    각 시드에는 seed_source가 붙는다 - "embedding"이면 벡터/풀텍스트 유사도로
+    뽑힌 것이고, "alias"면 질문 문장에 그 노드의 이름/별칭이 그대로 등장해서
+    유사도 순위와 무관하게 강제로 포함된 것이다(가장 신뢰도 높은 신호이니
+    답변에서 우선 다뤄라). 응답에는 results 옆에 reasoning도 함께 온다 -
+    alias_matches(정확히 매칭된 이름), intent(질문 표현으로 추정한 관계
+    타입), paths(질문에 이름으로 지목된 노드가 2개 이상이면 그 노드들 사이
+    가능한 모든 쌍의 최단 경로 목록 - 각 항목이 found=true면 nodes/relations에
+    실제 경로가 담기고, found=false면 그 쌍은 연결이 없다는 뜻이다. 노드가
+    3개 이상 지목됐으면 쌍이 여러 개 온다), summary(이 모든 걸 사람이 읽을
+    문장으로 정리한 것)를 담는다. "A와 B의 관계가 뭐야"처럼 질문에 이름이
+    여러 개 나오면, 각자의 이웃을 나열하기 전에 reasoning.paths부터 확인해서
+    그 이름들 사이에 직접적인 연결이 있는지 먼저 보는 게 좋다 - 이름이 3개
+    이상이면 paths에 여러 쌍이 들어있으니 그 이름들과 관련된 쌍을 찾아서 보면
+    된다."""
     params = {"q": query, "top_k": top_k}
     if brain:
         params["brain_id"] = brain

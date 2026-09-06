@@ -211,6 +211,51 @@
   pre.raw{ display:none; margin-top:8px; max-height:280px; overflow:auto; background:var(--surface-2); border:1px solid var(--border); border-radius:8px; padding:10px 12px; font-size:11.5px; }
   pre.raw.show{ display:block; }
 
+  /* --- 실사용 로그 히스토리 --- */
+  .log-filter-row{ display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap; align-items:center; }
+  .log-filter-row select, .log-filter-row input[type=number]{
+    padding:6px 8px; border-radius:7px; border:1px solid var(--border-strong);
+    background:var(--surface); color:var(--text); font-size:12.5px;
+  }
+  .log-list{ display:flex; flex-direction:column; gap:8px; max-height:420px; overflow-y:auto; }
+  .log-entry{ border:1px solid var(--border); border-radius:9px; padding:10px 12px; cursor:pointer; transition:border-color .15s, background .15s; }
+  .log-entry:hover{ border-color:var(--accent); background:var(--accent-bg); }
+  .log-entry.active{ border-color:var(--accent); background:var(--accent-bg); }
+  .log-row1{ display:flex; align-items:center; gap:8px; }
+  .log-badge{ font-size:10px; font-weight:700; padding:2px 7px; border-radius:99px; color:#fff; white-space:nowrap; }
+  .log-badge.mcp{ background:var(--good); }
+  .log-badge.web{ background:var(--text-muted); }
+  .log-badge.mode-all{ background:var(--accent); }
+  .log-badge.mode-routed{ background:var(--grp-usage); }
+  .log-ts{ font-size:11px; color:var(--text-muted); margin-left:auto; white-space:nowrap; }
+  .log-query{ font-weight:600; font-size:13.5px; margin:5px 0 3px; }
+  .log-meta{ font-size:11.5px; color:var(--text-muted); }
+  .log-del-btn{ font-size:11px; font-weight:600; padding:2px 9px; border-radius:99px; border:1px solid var(--bad); background:transparent; color:var(--bad); cursor:pointer; white-space:nowrap; }
+  .log-del-btn:hover{ background:var(--bad); color:#fff; }
+  .log-view-banner{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:9px 14px; margin-bottom:12px; border-radius:9px;
+    background:var(--accent-bg); border:1px solid var(--accent);
+    font-size:12.5px; font-weight:600; color:var(--accent);
+  }
+  .log-view-banner button{ font-size:11.5px; }
+
+  /* --- 이 쿼리의 사고 과정 (reasoning) --- */
+  .reasoning-summary{ font-size:13px; line-height:1.6; color:var(--text); background:var(--accent-bg); border:1px solid var(--accent); border-radius:9px; padding:10px 14px; margin-bottom:14px; }
+  .reasoning-block{ margin-bottom:14px; }
+  .reasoning-block:last-child{ margin-bottom:0; }
+  .alias-chip-grid{ display:flex; flex-wrap:wrap; gap:8px; }
+  .alias-chip{ display:inline-flex; align-items:center; gap:6px; padding:5px 10px; border-radius:9px; border:1px solid var(--border); background:var(--surface-2); font-size:12px; }
+  .path-trace{ display:flex; flex-wrap:wrap; align-items:center; gap:6px; font-size:12.5px; }
+  .path-node{ padding:4px 10px; border-radius:99px; border:1px solid var(--accent); background:var(--accent-bg); color:var(--accent); font-weight:600; }
+  .path-rel{ color:var(--text-muted); font-size:11px; font-weight:700; white-space:nowrap; }
+  .path-pair{ margin-bottom:10px; }
+  .path-pair:last-child{ margin-bottom:0; }
+  .path-pair-label{ font-size:11px; font-weight:700; color:var(--text-muted); margin-bottom:4px; }
+  .seed-source-badge{ font-size:10px; font-weight:700; padding:2px 7px; border-radius:99px; color:#fff; white-space:nowrap; }
+  .seed-source-badge.alias{ background:var(--good); }
+  .seed-source-badge.both{ background:var(--grp-usage); }
+
   .footnote{ color:var(--text-muted); font-size:12px; margin-top:26px; text-align:center; }
   .footnote code{ background:var(--surface-2); padding:1px 6px; border-radius:5px; }
 </style>
@@ -293,7 +338,13 @@
   </section>
 
   <section class="card">
+    <h2>이 쿼리의 사고 과정</h2>
+    <div id="reasoningBody"><div class="empty-note">쿼리를 입력하고 검색을 눌러보세요.</div></div>
+  </section>
+
+  <section class="card">
     <h2>4단계 결과 — RRF 병합 시드 목록</h2>
+    <div class="log-view-banner" id="logViewBanner" style="display:none;"></div>
     <div id="seedListWrap"><div class="empty-note">쿼리를 입력하고 검색을 눌러보세요.</div></div>
     <button class="raw-toggle" id="rawToggle" style="display:none;">원본 응답 JSON 보기</button>
     <pre class="raw" id="rawJson"></pre>
@@ -303,6 +354,30 @@
     <h2>관계 타입 범례 <button class="legend-toggle" id="legendToggle">펼치기</button></h2>
     <div class="legend-body" id="legendBody">
       <div class="legend-grid" id="legendGrid"></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>실사용 로그 히스토리 <button class="legend-toggle" id="logHistoryToggle">펼치기</button></h2>
+    <div id="logHistoryBody" style="display:none;">
+      <div class="hint" style="margin-bottom:10px;">
+        실제 <code>/api/graph-search</code> 호출마다(Claude가 대화 중 MCP <code>search_graph</code>로 검색한 것 포함) <code>logs/traversal_log.jsonl</code>에 남는 기록입니다. <b>mcp</b>는 Claude가 실제로 쓴 검색, <b>web</b>은 이 페이지를 포함한 브라우저 쪽 호출입니다. 항목을 클릭하면 그때의 시드/이웃 결과를 위 "4단계 결과"에 그대로 다시 그립니다(재검색이 아니라, 서버에 저장된 그 순간의 기록입니다).
+      </div>
+      <div class="log-filter-row">
+        <select id="logSourceFilter">
+          <option value="">전체 출처</option>
+          <option value="mcp">mcp (실사용)</option>
+          <option value="web">web (브라우저)</option>
+        </select>
+        <select id="logModeFilter">
+          <option value="">전체 모드</option>
+          <option value="all">all</option>
+          <option value="routed">routed</option>
+        </select>
+        <input type="number" id="logLimit" value="30" min="1" max="200">
+        <button class="btn ghost" id="logRefreshBtn" type="button">불러오기</button>
+      </div>
+      <div id="logListWrap"><div class="empty-note">불러오기를 눌러 로그를 확인하세요.</div></div>
     </div>
   </section>
 
@@ -372,7 +447,15 @@
     // 검색 실행 없이 체크박스/M/2촌 설정만 바꿔도 서버에 실제로 재요청해서 결과를
     // 바로 다시 그릴 때, 사용자가 펼쳐서 보고 있던 시드 카드가 접혀버리지 않도록
     // 열린 시드의 "type:slug" 키를 기억해둔다.
-    openSeeds: new Set()
+    openSeeds: new Set(),
+    // "실사용 로그 히스토리" 카드에서 불러온 traversal_log.jsonl 항목들과, 그중
+    // 현재 화면에 그려서 보고 있는 항목의 인덱스(문자열) - null이면 라이브 검색
+    // 결과를 보고 있는 것이다.
+    logEntries: [],
+    viewingLogKey: null,
+    // 라이브 검색으로 마지막으로 받은 reasoning - 로그 히스토리를 보다가
+    // "라이브 검색으로 돌아가기"를 누르면 이걸 다시 그린다.
+    lastReasoning: null
   };
 
   /* ---------------- DOM 준비 ---------------- */
@@ -597,7 +680,7 @@
         }
         return r.json();
       })
-      .then(function(data){ return data.results || []; });
+      .then(function(data){ return { results: data.results || [], reasoning: data.reasoning || null }; });
   }
 
   // 실제 네트워크 요청 한 번으로 (필요하면 mode=routed의 실제 라우팅/랭킹/2촌
@@ -605,10 +688,13 @@
   // 최초 검색과 refetchAndRender()의 설정-변경 재검색이 모두 이걸 쓴다.
   function fetchAndRender(query){
     var params = currentSearchParams();
-    return apiSearch(query, params).then(function(results){
+    return apiSearch(query, params).then(function(data){
+      var results = data.results;
       state.lastResults = results;
+      state.lastReasoning = data.reasoning;
       applyRoutedTypesToCheckboxes(results);
       renderSeedList(results, query);
+      renderReasoning(data.reasoning);
       $("rawToggle").style.display = "inline";
       $("rawJson").textContent = JSON.stringify(results, null, 2);
       return results;
@@ -620,6 +706,13 @@
   function runSearch(){
     var query = $("queryInput").value.trim();
     if (!query){ $("queryInput").focus(); return; }
+    if (state.viewingLogKey !== null){
+      // 로그 히스토리를 보던 중 새로 검색을 실행하면 "과거 기록"이 아니라 방금
+      // 실행한 라이브 결과를 봐야 하므로 배너/활성 표시를 정리한다.
+      state.viewingLogKey = null;
+      $("logViewBanner").style.display = "none";
+      $("logViewBanner").innerHTML = "";
+    }
     localStorage.setItem("sfv_baseUrl", currentBase());
     localStorage.setItem("sfv_brainId", $("brainSel").value);
 
@@ -656,7 +749,7 @@
   }
 
   /* ---------------- 시드/이웃 렌더링 ---------------- */
-  function renderSeedList(results, query){
+  function renderSeedList(results, query, modeOverride){
     var wrap = $("seedListWrap");
     wrap.innerHTML = "";
     if (!results.length){
@@ -675,16 +768,23 @@
       // 다시 그릴 때 그대로 펼친 채로 만든다.
       if (state.openSeeds.has(key)) card.classList.add("open");
 
+      var sourceBadge = "";
+      if (seed.seed_source === "alias"){
+        sourceBadge = '<span class="seed-source-badge alias" title="쿼리에 이름/별칭이 그대로 등장해 강제로 포함된 시드">별칭 매칭</span>';
+      } else if (seed.seed_source === "both"){
+        sourceBadge = '<span class="seed-source-badge both" title="임베딩 유사도로도 뽑히고, 이름/별칭도 그대로 매칭된 시드">별칭+임베딩</span>';
+      }
       var head = document.createElement("div");
       head.className = "seed-head";
       head.innerHTML =
         '<span class="rank">#' + (idx+1) + '</span>' +
         '<span class="type-badge ' + seed.type + '">' + seed.type + '</span>' +
+        sourceBadge +
         '<div style="flex:1; min-width:0;">' +
           '<div class="seed-label">' + escapeHtml(seed.label || seed.slug) + '</div>' +
           '<div class="score-bar"><i style="width:' + Math.max(4, Math.round((seed.score||0)/maxScore*100)) + '%;"></i></div>' +
         '</div>' +
-        '<span class="seed-score">RRF ' + (seed.score||0).toFixed(4) + '</span>' +
+        '<span class="seed-score">' + (seed.score == null ? '별칭 매칭' : ('RRF ' + seed.score.toFixed(4))) + '</span>' +
         '<span class="chev">▶</span>';
       head.addEventListener("click", function(){
         var isOpen = card.classList.toggle("open");
@@ -694,7 +794,7 @@
 
       var body = document.createElement("div");
       body.className = "neighbor-body";
-      body.appendChild(renderNeighbors(seed));
+      body.appendChild(renderNeighbors(seed, modeOverride));
       card.appendChild(body);
 
       wrap.appendChild(card);
@@ -747,10 +847,15 @@
     return sec;
   }
 
-  function renderNeighbors(seed){
+  function renderNeighbors(seed, modeOverride){
+    // 로그 히스토리에서 과거 기록을 볼 때는 지금 화면의 모드 토글(state.mode)이
+    // 아니라 "그 로그가 실제로 어떤 mode로 호출됐는지"를 따라야 한다 - 실시간
+    // 검색(runSearch/refetchAndRender)에서는 modeOverride를 안 넘기므로 그대로
+    // state.mode를 쓴다.
+    var mode = modeOverride || state.mode;
     var host = document.createElement("div");
 
-    if (state.mode === "current"){
+    if (mode === "current"){
       // mode=all — 서버가 예전 그대로 시드 하나당 flat neighbors[]를 내려준다
       // (LINKED_TO/semantic 뒤섞여 있고 필터 없음). 클라이언트는 relation 유무로
       // provenance/semantic만 나눠서 보여준다.
@@ -811,6 +916,228 @@
     return host;
   }
 
+  // 최종 시드/이웃뿐 아니라 "왜 그렇게 뽑혔는지"의 과정 자체를 보여준다 -
+  // graph_db.search()가 results 옆에 함께 돌려주는 reasoning(별칭/이름
+  // 매칭, 의도 분류, 경로 탐색, 한 줄 요약)을 그대로 그린다. 라이브 검색과
+  // 로그 히스토리 재생 둘 다 이 함수 하나를 공유한다.
+  function renderReasoning(reasoning){
+    var host = $("reasoningBody");
+    if (!reasoning){
+      host.innerHTML = '<div class="empty-note">사고 과정 정보가 없습니다 (이 기능 추가 전에 저장된 로그이거나, 아직 검색 전입니다).</div>';
+      return;
+    }
+    var html = "";
+    if (reasoning.summary){
+      html += '<div class="reasoning-summary">' + escapeHtml(reasoning.summary) + '</div>';
+    }
+
+    html += '<div class="reasoning-block"><div class="neigh-section-title">별칭/이름 매칭 (강제 시드 포함)</div>';
+    if (reasoning.alias_matches && reasoning.alias_matches.length){
+      html += '<div class="alias-chip-grid">';
+      reasoning.alias_matches.forEach(function(m){
+        html += '<span class="alias-chip"><span class="type-badge ' + m.type + '" style="font-size:9.5px; padding:1px 5px;">' + m.type + '</span> "' + escapeHtml(m.matched_text) + '" \u2192 ' + escapeHtml(m.label) + '</span>';
+      });
+      html += '</div>';
+    } else {
+      html += '<span class="hint">쿼리 텍스트에 그대로 매치되는 별칭이 없었습니다.</span>';
+    }
+    html += '</div>';
+
+    html += '<div class="reasoning-block"><div class="neigh-section-title">의도 분류 (질문 표현 패턴)</div>';
+    if (reasoning.intent && reasoning.intent.matched_patterns && reasoning.intent.matched_patterns.length){
+      html += '<div class="alias-chip-grid">';
+      reasoning.intent.matched_patterns.forEach(function(p){
+        var added = reasoning.intent_added_types && reasoning.intent_added_types.indexOf(p.type) !== -1;
+        html += '<span class="alias-chip">' + escapeHtml(p.type) + ' \u2190 "' + escapeHtml(p.pattern) + '"' + (added ? ' <b>(라우팅에 추가됨)</b>' : '') + '</span>';
+      });
+      html += '</div>';
+    } else {
+      html += '<span class="hint">감지된 질문 표현 패턴이 없습니다.</span>';
+    }
+    html += '</div>';
+
+    // paths는 별칭 매칭 노드 사이 "가능한 쌍 전부"의 최단 경로 배열이다(3개
+    // 이상 지목되면 쌍이 여러 개 온다) - 이 기능을 paths(복수)로 바꾸기 전에
+    // 저장된 옛날 로그는 reasoning.path(단수, 객체 하나)만 있으므로, 그런
+    // 로그를 "실사용 로그 히스토리"에서 다시 열어도 깨지지 않게 배열로
+    // 감싸서 그대로 재생한다.
+    var pathList = reasoning.paths || (reasoning.path ? [reasoning.path] : null);
+    if (pathList && pathList.length){
+      html += '<div class="reasoning-block"><div class="neigh-section-title">개체 간 경로 탐색 (' + pathList.length + '쌍)</div>';
+      pathList.forEach(function(pathInfo){
+        var anchorLabel = (pathInfo.anchors && pathInfo.anchors.length === 2)
+          ? (pathInfo.anchors[0].slug + " \u2194 " + pathInfo.anchors[1].slug)
+          : "";
+        html += '<div class="path-pair">';
+        if (anchorLabel){
+          html += '<div class="path-pair-label">' + escapeHtml(anchorLabel) + '</div>';
+        }
+        if (pathInfo.found){
+          var parts = [];
+          pathInfo.nodes.forEach(function(n, i){
+            parts.push('<span class="path-node">' + escapeHtml(n.label || n.slug) + '</span>');
+            if (pathInfo.relations[i]) parts.push('<span class="path-rel">\u2192[' + escapeHtml(pathInfo.relations[i]) + ']\u2192</span>');
+          });
+          html += '<div class="path-trace">' + parts.join("") + '</div>';
+        } else {
+          html += '<span class="hint">이 쌍 사이를 연결하는 경로를 찾지 못했습니다.</span>';
+        }
+        html += '</div>';
+      });
+      html += '</div>';
+    }
+
+    host.innerHTML = html;
+  }
+
+  /* ---------------- 실사용 로그 히스토리 ---------------- */
+  // app.py의 /api/graph-search가 호출될 때마다(MCP search_graph를 통한 실사용
+  // 포함) paper_notes/traversal_log.py가 logs/traversal_log.jsonl에 한 줄씩
+  // 남긴 기록을 /api/traversal-logs로 조회해서 보여준다. 이 카드는 검색을 새로
+  // 실행하는 게 아니라 "그 순간 서버에 실제로 남은 결과"를 그대로 다시 그리는
+  // 것이므로, renderSeedList/renderNeighbors에 modeOverride를 넘겨서 지금 화면의
+  // 모드 토글 상태와 무관하게 로그 항목 자체의 mode를 따르게 한다.
+  function apiTraversalLogs(opts){
+    opts = opts || {};
+    var params = new URLSearchParams();
+    params.set("limit", String(opts.limit || 30));
+    if (opts.source) params.set("source", opts.source);
+    if (opts.mode) params.set("mode", opts.mode);
+    return fetch(currentBase() + "/api/traversal-logs?" + params.toString())
+      .then(function(r){
+        if (!r.ok){
+          return r.json().catch(function(){ return {}; }).then(function(body){
+            throw new Error((body && body.detail) || ("HTTP " + r.status));
+          });
+        }
+        return r.json();
+      })
+      .then(function(data){ return data.entries || []; });
+  }
+
+  function loadTraversalLogs(){
+    var wrap = $("logListWrap");
+    wrap.innerHTML = '<div class="empty-note">불러오는 중…</div>';
+    var opts = {
+      limit: parseInt($("logLimit").value, 10) || 30,
+      source: $("logSourceFilter").value,
+      mode: $("logModeFilter").value
+    };
+    apiTraversalLogs(opts).then(function(entries){
+      state.logEntries = entries;
+      state.viewingLogKey = null;
+      renderLogList(entries);
+    }).catch(function(err){
+      wrap.innerHTML = '<div class="empty-note" style="color:var(--bad);">로그를 불러오지 못했습니다: ' + escapeHtml(err.message) + '</div>';
+    });
+  }
+
+  function renderLogList(entries){
+    var wrap = $("logListWrap");
+    wrap.innerHTML = "";
+    if (!entries.length){
+      wrap.innerHTML = '<div class="empty-note">기록된 로그가 없습니다. (아직 실사용 검색이 없거나, 필터에 맞는 기록이 없을 수 있습니다)</div>';
+      return;
+    }
+    var list = document.createElement("div");
+    list.className = "log-list";
+    entries.forEach(function(entry, idx){
+      var item = document.createElement("div");
+      item.className = "log-entry";
+      if (state.viewingLogKey === String(idx)) item.classList.add("active");
+      var ts = entry.ts ? new Date(entry.ts).toLocaleString() : "";
+      var seedCount = entry.seed_count != null ? entry.seed_count : (entry.results || []).length;
+      item.innerHTML =
+        '<div class="log-row1">' +
+          '<span class="log-badge ' + (entry.source === "mcp" ? "mcp" : "web") + '">' + (entry.source === "mcp" ? "MCP 실사용" : "web") + '</span>' +
+          '<span class="log-badge ' + (entry.mode === "routed" ? "mode-routed" : "mode-all") + '">' + escapeHtml(entry.mode || "all") + '</span>' +
+          '<span class="log-ts">' + escapeHtml(ts) + '</span>' +
+          '<button class="log-del-btn" type="button" title="이 로그 기록 삭제">삭제</button>' +
+        '</div>' +
+        '<div class="log-query">' + escapeHtml(entry.query || "") + '</div>' +
+        '<div class="log-meta">시드 ' + seedCount + '개 · ' +
+          (typeof entry.duration_ms === "number" ? entry.duration_ms.toFixed(1) + "ms" : "-") +
+          (entry.brain_id ? " · brain: " + escapeHtml(entry.brain_id) : "") + '</div>';
+      item.addEventListener("click", function(){ viewLogEntry(entry, idx); });
+      item.querySelector(".log-del-btn").addEventListener("click", function(e){
+        e.stopPropagation();
+        deleteLogEntry(entry, idx);
+      });
+      list.appendChild(item);
+    });
+    wrap.appendChild(list);
+  }
+
+  // 로그 한 줄 삭제 - 서버(traversal_log.jsonl)에서 지우고, 성공하면 로컬
+  // state.logEntries에서도 같은 항목을 빼서 다시 그린다. 지우려는 항목을 지금
+  // 보고 있던 중이었으면(state.viewingLogKey) 라이브 검색 화면으로 돌아간다.
+  function deleteLogEntry(entry, idx){
+    if (!confirm('이 로그 기록을 삭제할까요? 되돌릴 수 없습니다.\n\n"' + (entry.query || "") + '"')) return;
+    var params = new URLSearchParams();
+    params.set("ts", entry.ts || "");
+    fetch(currentBase() + "/api/traversal-logs?" + params.toString(), { method: "DELETE" })
+      .then(function(r){
+        if (!r.ok){
+          return r.json().catch(function(){ return {}; }).then(function(body){
+            throw new Error((body && body.detail) || ("HTTP " + r.status));
+          });
+        }
+        return r.json();
+      })
+      .then(function(data){
+        if (!data.deleted){
+          console.warn("삭제할 로그를 서버에서 찾지 못했습니다(이미 지워졌을 수 있음):", entry.ts);
+        }
+        var wasViewing = state.viewingLogKey === String(idx);
+        state.logEntries = state.logEntries.filter(function(e){ return e !== entry; });
+        if (wasViewing){
+          exitLogView(); // 내부에서 renderLogList(state.logEntries)까지 다시 그려준다
+        } else {
+          renderLogList(state.logEntries);
+        }
+      })
+      .catch(function(err){
+        alert("삭제 실패: " + err.message);
+      });
+  }
+
+    function viewLogEntry(entry, idx){
+    state.viewingLogKey = String(idx);
+    renderLogList(state.logEntries);
+    var modeForRender = entry.mode === "routed" ? "improved" : "current";
+    var ts = entry.ts ? new Date(entry.ts).toLocaleString() : "알 수 없음";
+    var banner = $("logViewBanner");
+    banner.style.display = "flex";
+    banner.innerHTML =
+      '<span>과거 로그 보기 (실시간 아님) — ' + escapeHtml(ts) + ' · ' +
+        (entry.source === "mcp" ? "Claude 실사용" : "웹 호출") + ' · mode=' + escapeHtml(entry.mode || "all") + '</span>' +
+      '<button class="btn ghost" type="button" id="logViewBackBtn">라이브 검색으로 돌아가기</button>';
+    $("logViewBackBtn").addEventListener("click", exitLogView);
+    $("queryInput").value = entry.query || "";
+    renderSeedList(entry.results || [], entry.query || "", modeForRender);
+    renderReasoning(entry.reasoning || null);
+    $("rawToggle").style.display = "inline";
+    $("rawJson").textContent = JSON.stringify(entry.results || [], null, 2);
+    $("seedListWrap").scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function exitLogView(){
+    state.viewingLogKey = null;
+    var banner = $("logViewBanner");
+    banner.style.display = "none";
+    banner.innerHTML = "";
+    renderLogList(state.logEntries);
+    if (state.lastResults){
+      renderSeedList(state.lastResults, $("queryInput").value.trim());
+      renderReasoning(state.lastReasoning);
+      $("rawJson").textContent = JSON.stringify(state.lastResults, null, 2);
+    } else {
+      $("seedListWrap").innerHTML = '<div class="empty-note">쿼리를 입력하고 검색을 눌러보세요.</div>';
+      renderReasoning(null);
+      $("rawToggle").style.display = "none";
+    }
+  }
+
   /* ---------------- 이벤트 바인딩 ---------------- */
   function bindEvents(){
     $("baseUrl").value = state.baseUrl;
@@ -840,6 +1167,15 @@
     $("capM").addEventListener("input", debouncedRefetch);
     $("hop2Chk").addEventListener("change", refetchAndRender);
     $("hop2N").addEventListener("input", debouncedRefetch);
+
+    $("logHistoryToggle").addEventListener("click", function(){
+      var body = $("logHistoryBody");
+      var show = body.style.display === "none";
+      body.style.display = show ? "block" : "none";
+      $("logHistoryToggle").textContent = show ? "접기" : "펼치기";
+      if (show && !state.logEntries.length) loadTraversalLogs();
+    });
+    $("logRefreshBtn").addEventListener("click", loadTraversalLogs);
   }
 
   function setMode(mode){

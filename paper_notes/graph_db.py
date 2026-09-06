@@ -8,8 +8,8 @@ node_store.py에 이미 있는 중복 검사·불변식(entity의 paperless/pape
 
 검색은 세 축을 합친 하이브리드다:
 1. 그래프 트래버설(Cypher) - concept/entity/paper 사이의 실제 관계를 따라간다
-2. 벡터 검색 - description/note를 임베딩(paper_notes/embeddings.py, 로컬 모델)해서
-   의미가 비슷한 노드를 찾는다
+2. 벡터 검색 - display_label/aliases/description/note/user_notes를 합쳐
+   임베딩(paper_notes/embeddings.py, 로컬 모델)해서 의미가 비슷한 노드를 찾는다
 3. 풀텍스트 검색 - 정확한 단어/구절이 일치하는 노드를 찾는다(벡터 검색이
    놓치기 쉬운 고유명사·약어에 강함)
 Neo4j 5.11+가 이 셋을 전부 네이티브로 지원해서, 별도 벡터DB/검색엔진 없이
@@ -17,8 +17,10 @@ Neo4j 하나로 구성한다.
 """
 from __future__ import annotations
 
+import itertools
 import math
 import os
+import re
 import threading
 
 from paper_notes.embeddings import embed_passage, embed_query, embedding_dimension
@@ -100,14 +102,17 @@ def ensure_schema() -> None:
         )
 
 
-def _node_text(frontmatter: dict) -> str:
-    """임베딩에 넣을 텍스트 - 이름/별칭/설명/메모를 합친다(설명만 넣으면 짧은
-    노드는 신호가 너무 적다)."""
+def _node_text(frontmatter: dict, user_notes: str = "") -> str:
+    """임베딩에 넣을 텍스트 - 이름/별칭/설명/메모/사용자 메모를 합친다(설명만
+    넣으면 짧은 노드는 신호가 너무 적다). user_notes까지 합쳐야 사용자가 직접
+    쓴 해석/메모 내용도 벡터 검색으로 "의미로" 찾을 수 있다 - 전엔 여기 안
+    들어가서 풀텍스트 검색(정확한 단어 일치)으로만 찾을 수 있었다."""
     parts = [
         frontmatter.get("display_label", ""),
         ", ".join(frontmatter.get("aliases") or []),
         frontmatter.get("description", ""),
         frontmatter.get("note", ""),
+        user_notes or "",
     ]
     return "\n".join(p for p in parts if p)
 
@@ -154,16 +159,18 @@ def sync_node(node_type: str, slug: str) -> None:
         delete_node_from_graph(node_type, slug)
         return
 
-    embedding = embed_passage(_node_text(frontmatter))
-
     # Neo4j 속성은 출처별로 셋으로 나눈다 - description/note는 frontmatter의 값을
     # 그대로(둘 다 논문 요약 파이프라인이 채운 AI 생성 텍스트, resolve_or_create_node
     # 참고 - 서로 합치지 않고 각자 자기 이름의 속성에만 들어간다), user_notes는
     # node_store의 user-notes 섹션(사용자가 직접 쓴 원문, 또는 대화 중 add_note로
     # 덧붙여진 내용)을 별도 속성으로 둔다. 세 속성 모두 섞이지 않아야 검색 결과를
-    # 읽는 쪽(Claude 등)이 어디서 나온 텍스트인지 헷갈리지 않는다.
+    # 읽는 쪽(Claude 등)이 어디서 나온 텍스트인지 헷갈리지 않는다 - 단, 임베딩
+    # 텍스트(_node_text)에는 검색 신호를 넓히기 위해 user_notes도 같이 넣으므로
+    # (아래), 임베딩 계산 전에 먼저 읽어둔다.
     user_notes = get_user_section(NODE_STORE_ROOT, node_type, slug)
     brain_ids = _node_brain_ids(frontmatter)
+
+    embedding = embed_passage(_node_text(frontmatter, user_notes))
 
     driver = get_driver()
     with driver.session() as session:
@@ -443,17 +450,125 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return dot / (norm_a * norm_b)
 
 
-def _route_relation_types(query_vec: list[float], whitelist: list[str], top_n: int = 3) -> dict[str, float]:
+def _route_relation_types(
+    query_vec: list[float], whitelist: list[str], top_n: int = 3,
+    must_include: set[str] | None = None,
+) -> dict[str, float]:
     """쿼리 임베딩과 각 관계 타입 설명 임베딩의 코사인 유사도로 top_n개(+
     점수)를 고른다 - 진짜 임베딩 기반(test/search_flow_visualizer.html의 예전
     클라이언트 사이드 텍스트 겹침 데모를 대체하는 실제 구현). 전부 낮은
     점수여도 top_n개는 반환한다 - 아예 안 걸리는 것보단 그나마 가까운
-    것들이라도 이웃을 보여주는 게 낫다는 판단."""
-    scored = sorted(
-        ((t, _cosine(query_vec, _type_embedding(t))) for t in whitelist),
-        key=lambda pair: pair[1], reverse=True,
-    )
-    return dict(scored[:top_n])
+    것들이라도 이웃을 보여주는 게 낫다는 판단.
+
+    must_include를 주면(의도 분류 _classify_intent()가 감지한 타입) 코사인
+    유사도 top_n 안에 못 들었어도 강제로 결과에 끼워 넣는다 - "질문 표현상
+    명백히 SOLVES인데 임베딩 유사도로는 top_3 밖으로 밀렸다" 같은 recall
+    누락을 보강하기 위함이다. 점수는 그 타입의 실제 코사인 유사도를 그대로
+    쓴다(스케일을 임의로 섞지 않기 위해)."""
+    scored_all = {t: _cosine(query_vec, _type_embedding(t)) for t in whitelist}
+    top_types = sorted(scored_all, key=lambda t: scored_all[t], reverse=True)[:top_n]
+    types = set(top_types)
+    if must_include:
+        types |= {t for t in must_include if t in scored_all}
+    return {t: scored_all[t] for t in types}
+
+
+_MIN_ALIAS_LEN = 2  # 1글자 별칭(예: 초성만 남은 축약)은 쿼리 아무 데서나 우연히
+                     # 매치될 위험이 커서 강제 시드 포함 대상에서 제외한다.
+
+
+_ALIAS_SEP_RE = re.compile(r"[-_\s]+")  # 별칭 안에서 "구분자"로 취급할 문자들
+
+
+def _alias_pattern(name: str) -> "re.Pattern[str] | None":
+    """별칭 문자열을 정규식으로 컴파일한다. 이름을 하이픈/언더스코어/공백
+    (연속 포함) 단위로 쪼갠 뒤, 그 사이는 "구분자 아무 조합이나(하나 이상)"에
+    매칭되도록 다시 이어붙인다 - 그래서 "SWE-bench Verified"라는 별칭이
+    "swe bench verified"/"SWE_BENCH_VERIFIED"/"swe-bench-verified"/
+    "SWE   Bench Verified"처럼 대소문자나 구분자 종류·개수만 다르게 입력돼도
+    매칭된다. 구분자가 아닌 나머지 글자(마침표, 괄호, 숫자 등)는 re.escape로
+    리터럴 그대로 취급하므로 "Kimi K1.5" 같은 이름도 문제없다. 구분자만
+    남고 실제 글자가 하나도 없는 이름(빈 문자열 등)이면 None을 돌려준다."""
+    parts = [p for p in _ALIAS_SEP_RE.split(name) if p]
+    if not parts:
+        return None
+    return re.compile(r"[-_\s]+".join(re.escape(p) for p in parts), re.IGNORECASE)
+
+
+def _detect_alias_matches(query: str, brain_id: str | None) -> list[dict]:
+    """쿼리 문자열 안에 Concept/Entity의 display_label이나 별칭이 (구분자
+    변형까지 허용해서) 그대로 등장하는지 찾는다. 임베딩 유사도(의미가
+    비슷한가)와는 다른, "정확히 이 이름이 텍스트에 있다"는 결정론적 신호다 -
+    의미상 가까운 다른 노드에 밀려 top_k 밖으로 빠지더라도 search()가 이
+    결과를 항상 강제 시드로 포함시킨다. 긴 이름부터 매칭해서
+    ("Transformer-XL"이 있으면 부분 문자열인 "Transformer"에 가려지지
+    않게) 겹치는 구간은 한 번만 센다."""
+    candidates: list[tuple[str, str, str, str]] = []  # (매칭용 이름, 타입 라벨, slug, display_label)
+    for node_type, type_label in (("concept", "Concept"), ("entity", "Entity")):
+        for node in list_nodes(NODE_STORE_ROOT, node_type):
+            if brain_id is not None and brain_id not in _node_brain_ids(node):
+                continue
+            for name in [node.get("display_label", ""), *(node.get("aliases") or [])]:
+                name = (name or "").strip()
+                if len(name) >= _MIN_ALIAS_LEN:
+                    candidates.append((name, type_label, node["slug"], node["display_label"]))
+    candidates.sort(key=lambda c: len(c[0]), reverse=True)
+
+    covered = [False] * len(query)
+    matched: dict[tuple[str, str], dict] = {}
+    for name, type_label, slug, display_label in candidates:
+        key = (type_label, slug)
+        if key in matched:
+            continue
+        pattern = _alias_pattern(name)
+        if pattern is None:
+            continue
+        for m in pattern.finditer(query):
+            start, end = m.start(), m.end()
+            if not any(covered[start:end]):
+                matched[key] = {
+                    "matched_text": query[start:end], "type": type_label,
+                    "slug": slug, "label": display_label,
+                }
+                for i in range(start, end):
+                    covered[i] = True
+                break
+    return list(matched.values())
+
+
+# ---- 의도 분류 (질문 표현 패턴 -> 관계 타입) ----
+# 임베딩 기반 라우팅(_route_relation_types)을 대체하는 게 아니라 보강한다 -
+# 문법 파싱 없이 자주 쓰이는 한국어 질문 표현 몇 가지만 감지해서, 임베딩
+# top_3에 못 든 타입도 "질문 표현상 명백히 관련 있다"면 라우팅에 강제로
+# 끼워 넣는 recall 보강 장치다. 목록은 실사용을 보면서 계속 늘려가면 된다.
+_INTENT_PATTERNS: dict[str, list[str]] = {
+    "SOLVES": ["어떻게 풀", "해결", "줄이는 방법", "줄이려면", "방지하는 방법", "어떻게 하면", "완화하는", "극복하는"],
+    "LIMITED_BY": ["한계", "단점", "문제점", "약점", "부작용"],
+    "OUTPERFORMS": ["더 나은", "더 좋은", "우세", "능가", "보다 낫"],
+    "COMPARED_TO": ["비교", "차이점", "차이가", "대비"],
+    "IMPROVES_ON": ["개선", "향상시키", "발전시키"],
+    "EXTENDS": ["확장한", "후속 연구", "발전된 버전"],
+    "USES": ["어떻게 사용", "활용하는", "쓰이는 방식", "구성 요소로"],
+    "IS_A": ["이란 무엇", "란 무엇", "정의가", "무엇인가요", "뜻이"],
+    "PART_OF": ["구성 요소", "이루어져", "포함하는 요소"],
+    "EVALUATED_ON": ["벤치마크", "평가 데이터셋", "어떤 데이터로 검증"],
+    "CONTRADICTS": ["상충", "모순되는", "반대되는 주장"],
+}
+
+
+def _classify_intent(query: str) -> dict:
+    """질문 표현(어미/키워드)으로 관련 있을 법한 관계 타입을 추정한다.
+    문법적으로 문장을 파싱하지 않고 단순 포함 여부만 보는 가벼운 규칙
+    기반이라, "왜 이 타입을 골랐는지"(어떤 패턴이 매치됐는지)를 그대로
+    보여줄 수 있다는 게 장점이다."""
+    matched_patterns: list[dict] = []
+    types: set[str] = set()
+    for rel_type, patterns in _INTENT_PATTERNS.items():
+        for pattern in patterns:
+            if pattern in query:
+                matched_patterns.append({"type": rel_type, "pattern": pattern})
+                types.add(rel_type)
+    return {"types": sorted(types), "matched_patterns": matched_patterns}
 
 
 def _ranked_semantic_neighbors(
@@ -536,6 +651,51 @@ def _expand_routed_neighbors(
     return {"provenance": provenance, "semantic": capped, "semantic_total_before_cap": len(semantic)}
 
 
+_PATH_NODE_TYPES = {"Concept", "Entity"}  # Cypher 라벨 문자열 보간 전 화이트리스트
+
+_MAX_PATH_ANCHORS = 6  # 별칭 매칭 노드 사이 모든 쌍을 탐색하되, 쌍의 개수는
+# n*(n-1)/2로 늘어나고(6개면 15쌍) shortestPath 하나하나가 Neo4j 왕복(Aura,
+# 클라우드라 매번 네트워크 비용이 붙는다)이라 무제한으로 두면 응답이 느려질 수
+# 있다 - 질문 하나에 이보다 많은 고유명사를 언급하는 경우는 실제로 거의 없어서
+# 여기서 잘라도 실질적인 손해는 크지 않다고 보고 정한 값이다.
+
+
+def _find_shortest_path(
+    session, type1: str, slug1: str, type2: str, slug2: str, brain_id: str | None,
+) -> dict | None:
+    """쿼리에서 별칭으로 정확히 지목된 두 노드 사이의 최단 경로를 찾는다.
+    "A와 B를 비교해줘" 같은 쿼리에서 임베딩 기반 이웃 확장은 각 시드의
+    이웃을 따로따로 펼칠 뿐 "그 둘이 그래프에서 어떻게 연결되는지"는 보여
+    주지 못한다 - 이 함수가 그 빈틈을 채운다. LINKED_TO + semantic 12종을
+    구분 없이 최대 6홉까지 찾고, brain_id가 있으면 경로 위 모든 노드가 그
+    Brain 범위 안에 있어야 한다."""
+    if type1 not in _PATH_NODE_TYPES or type2 not in _PATH_NODE_TYPES:
+        return None
+    if type1 == type2 and slug1 == slug2:
+        return None
+    row = session.run(
+        f"""
+        MATCH (a:{type1} {{slug: $slug1}}), (b:{type2} {{slug: $slug2}})
+        OPTIONAL MATCH p = shortestPath((a)-[*..6]-(b))
+        WHERE p IS NULL OR $brain_id IS NULL OR ALL(n IN nodes(p) WHERE
+            ('Paper' IN labels(n) AND n.brain_id = $brain_id) OR
+            (NOT 'Paper' IN labels(n) AND $brain_id IN n.brain_ids))
+        RETURN
+            [n IN nodes(p) | {{slug: n.slug, type: labels(n)[0],
+                label: CASE WHEN 'Paper' IN labels(n) THEN n.title ELSE n.display_label END}}] AS path_nodes,
+            [r IN relationships(p) | type(r)] AS path_relations
+        """,
+        slug1=slug1, slug2=slug2, brain_id=brain_id,
+    ).single()
+    anchors = [{"type": type1, "slug": slug1}, {"type": type2, "slug": slug2}]
+    if not row or not row["path_nodes"]:
+        return {"found": False, "anchors": anchors}
+    return {
+        "found": True, "anchors": anchors,
+        "nodes": row["path_nodes"], "relations": row["path_relations"],
+    }
+
+
 def search(
     query: str,
     top_k: int = 10,
@@ -544,7 +704,7 @@ def search(
     relation_types: list[str] | None = None,
     neighbor_cap: int = 5,
     hop2_top_n: int = 0,
-) -> list[dict]:
+) -> tuple[list[dict], dict]:
     """하이브리드 그래프 검색 - 벡터 유사도 + 풀텍스트 매치로 시드 노드를 찾고,
     각 시드에서 1촌 이웃까지 같이 반환한다(그래프 확장). GraphRAG의 핵심
     함수 - MCP의 search_graph 툴이 이걸 그대로 노출한다.
@@ -569,23 +729,60 @@ def search(
     mode="routed"면 docs/mcp/search_flow.md의 "개선 설계안"대로 동작한다:
     LINKED_TO(provenance)는 그대로 전부 반환하고, semantic 이웃만
     relation_types로 거른다. relation_types를 안 주면 쿼리 임베딩과 관계
-    타입 설명 임베딩의 코사인 유사도로 자동 라우팅(top 3)한다. 남은 semantic
-    이웃은 (타입 관련도) x (이웃 임베딩과 쿼리의 코사인 유사도)로 랭킹해서
-    시드당 상위 neighbor_cap개만 남기고, 그중 상위 hop2_top_n개는 한 번 더
-    (2촌) 같은 방식으로 확장한다("hop2" 필드). 이 모드의 응답은 시드마다
-    "neighbors" 대신 "provenance_neighbors"/"semantic_neighbors"/
-    "routed_types"를 담는다."""
+    타입 설명 임베딩의 코사인 유사도로 자동 라우팅(top 3)하되, 아래 "의도
+    분류"가 감지한 타입도 강제로 끼워 넣는다. 남은 semantic 이웃은 (타입
+    관련도) x (이웃 임베딩과 쿼리의 코사인 유사도)로 랭킹해서 시드당 상위
+    neighbor_cap개만 남기고, 그중 상위 hop2_top_n개는 한 번 더(2촌) 같은
+    방식으로 확장한다("hop2" 필드). 이 모드의 응답은 시드마다 "neighbors"
+    대신 "provenance_neighbors"/"semantic_neighbors"/"routed_types"를 담는다.
+
+    이 버전부터 mode와 상관없이 항상 두 가지 전처리를 추가로 거친다 -
+    "실사용(Claude가 MCP로 쓰는 mode=all 포함)에도 반영해야 실질적인 개선"
+    이라는 판단에 따라 mode="routed" 전용이 아니라 여기 search() 최상위에
+    둔다:
+
+    1) 별칭/이름 정확 매칭(_detect_alias_matches) - 쿼리 문자열에 어느
+       Concept/Entity의 display_label이나 별칭이 그대로 등장하면, 임베딩
+       유사도로 top_k 안에 못 들었어도 그 노드를 강제로 시드에 포함시킨다
+       ("A와 B를 비교해줘"에서 A/B가 의미상 다른 노드에 밀려 빠지는 걸 막기
+       위함). 이렇게 포함된 시드는 seed_source="alias"(임베딩 top_k와도
+       겹치면 "both", 아니면 기본값 "embedding")로 표시된다.
+    2) 의도 분류(_classify_intent) - 질문 표현(어미/키워드) 패턴으로 관련
+       있을 법한 관계 타입을 추정한다. mode="routed"이고 relation_types를
+       명시적으로 안 줬을 때만 실제 라우팅에 반영되며(임베딩 top_3에 강제
+       추가), mode="all"이거나 relation_types를 명시했을 때는 참고 정보로만
+       reasoning에 남는다.
+
+    별칭 매칭 노드가 2개 이상이면(_find_shortest_path) 그 사이의 최단 경로도
+    추가로 찾아서 reasoning.path에 담는다 - "이 둘이 그래프상 어떻게
+    연결되는지"는 개별 이웃 확장만으로는 안 보이기 때문이다.
+
+    반환값이 list[dict] 하나에서 (results, reasoning) 튜플로 바뀌었다.
+    reasoning은 위 alias_matches/intent/path와 사람이 읽을 수 있는 한 줄
+    요약(summary)을 담아서, 최종 노드/엣지뿐 아니라 "왜 그렇게 뽑혔는지"의
+    과정 자체를 보여주는 데 쓰인다(traversal_log.jsonl에 그대로 기록되고,
+    search_flow_visualizer.html의 "이 쿼리의 사고 과정" 패널이 그린다)."""
     driver = get_driver()
     query_vec = embed_query(query)
 
+    alias_matches = _detect_alias_matches(query, brain_id)
+    intent = _classify_intent(query)
+
     routed_types: dict[str, float] = {}
+    intent_added_types: list[str] = []
     if mode == "routed":
         known_types = list(load_relation_types(NODE_STORE_ROOT).keys())
         if relation_types:
             # 화이트리스트 검증: 여기서 걸러진 것만 밑에서 Cypher에 보간된다.
+            # 사용자가 타입을 명시했으면 의도 분류는 개입하지 않는다.
             routed_types = {t: 1.0 for t in relation_types if t in known_types}
         else:
-            routed_types = _route_relation_types(query_vec, known_types, top_n=3)
+            embedding_top = _route_relation_types(query_vec, known_types, top_n=3)
+            intent_candidates = {t for t in intent["types"] if t in known_types}
+            routed_types = _route_relation_types(
+                query_vec, known_types, top_n=3, must_include=intent_candidates
+            )
+            intent_added_types = sorted(set(routed_types) - set(embedding_top))
 
     with driver.session() as session:
         # db.index.vector.queryNodes는 최신 Neo4j에서 새 SEARCH 문법으로 대체
@@ -624,6 +821,46 @@ def search(
 
         top_seeds = _reciprocal_rank_fusion(vector_hits, fulltext_hits)[:top_k]
 
+        # 별칭으로 정확히 지목된 노드는 임베딩 top_k에 못 들었어도 강제로
+        # 시드 목록 맨 앞에 추가한다 - 정확한 이름 일치는 의미 유사도보다
+        # 신뢰도가 높은 신호라고 보기 때문이다. 이미 top_k 안에 있던 시드면
+        # seed_source만 "both"로 갱신한다.
+        existing_keys = {(s["type"], s["slug"]) for s in top_seeds}
+        forced_seeds = []
+        for am in alias_matches:
+            key = (am["type"], am["slug"])
+            if key in existing_keys:
+                for s in top_seeds:
+                    if (s["type"], s["slug"]) == key:
+                        s["seed_source"] = "both"
+            else:
+                forced_seeds.append({
+                    "slug": am["slug"], "type": am["type"], "label": am["label"],
+                    "score": None, "seed_source": "alias",
+                })
+                existing_keys.add(key)
+        for s in top_seeds:
+            s.setdefault("seed_source", "embedding")
+        top_seeds = forced_seeds + top_seeds
+
+        # 별칭으로 지목된 서로 다른 노드가 2개 이상이면, 그 사이 최단 경로를
+        # "가능한 쌍 전부"에 대해 찾는다 - "A와 B를 비교해줘"뿐 아니라 "A, B, C
+        # 관계 설명해줘"처럼 3개 이상 나와도 그중 두 개만 임의로 골라 나머지를
+        # 빠뜨리면 안 되기 때문이다(예전엔 항상 처음 두 개만 봤는데, 그 "처음"이
+        # 쿼리에 등장한 순서가 아니라 별칭 길이 내림차순이라 직관과 어긋나는
+        # 경우가 있었다). 각자의 이웃만 보여주는 것보다 지목된 노드들 사이
+        # 실제 연결을 직접 보여주는 게 더 유용하다.
+        distinct_anchors = list(dict.fromkeys((m["type"], m["slug"]) for m in alias_matches))
+        anchors_total = len(distinct_anchors)
+        capped_anchors = distinct_anchors[:_MAX_PATH_ANCHORS]
+        anchors_considered = len(capped_anchors)
+        paths: list[dict] = []
+        if anchors_considered >= 2:
+            for (t1, s1), (t2, s2) in itertools.combinations(capped_anchors, 2):
+                path_info = _find_shortest_path(session, t1, s1, t2, s2, brain_id)
+                if path_info is not None:
+                    paths.append(path_info)
+
         results = []
         for seed in top_seeds:
             if mode == "routed":
@@ -635,6 +872,7 @@ def search(
                     "type": seed["type"],
                     "label": seed["label"],
                     "score": seed["score"],
+                    "seed_source": seed["seed_source"],
                     "provenance_neighbors": expanded["provenance"],
                     "semantic_neighbors": expanded["semantic"],
                     "semantic_total_before_cap": expanded["semantic_total_before_cap"],
@@ -674,7 +912,68 @@ def search(
                     "type": seed["type"],
                     "label": seed["label"],
                     "score": seed["score"],
+                    "seed_source": seed["seed_source"],
                     "neighbors": [n for n in neighbors if n["slug"]],
                 }
             )
-        return results
+
+    reasoning = _build_reasoning(
+        alias_matches, intent, mode, routed_types, intent_added_types,
+        paths, anchors_total, anchors_considered,
+    )
+    return results, reasoning
+
+
+def _build_reasoning(
+    alias_matches: list[dict],
+    intent: dict,
+    mode: str,
+    routed_types: dict[str, float],
+    intent_added_types: list[str],
+    paths: list[dict],
+    anchors_total: int,
+    anchors_considered: int,
+) -> dict:
+    """이번 검색이 "왜 이렇게 됐는지"를 사람이 읽을 문장(summary)과 구조화된
+    필드로 함께 남긴다 - traversal_log.jsonl에 그대로 저장되고
+    search_flow_visualizer.html의 "이 쿼리의 사고 과정" 패널이 그린다."""
+    notes: list[str] = []
+    if alias_matches:
+        names = ", ".join(f"'{m['matched_text']}'({m['type']})" for m in alias_matches)
+        notes.append(f"쿼리 텍스트에 그대로 등장한 별칭/이름 {len(alias_matches)}개({names})를 강제 시드로 포함했습니다.")
+    else:
+        notes.append("쿼리 텍스트에 그대로 매치되는 노드 별칭은 없어서, 임베딩 유사도로만 시드를 골랐습니다.")
+
+    if intent["matched_patterns"]:
+        pat_desc = ", ".join(f"{p['type']}\u2190'{p['pattern']}'" for p in intent["matched_patterns"])
+        notes.append(f"질문 표현 패턴으로 관련 있을 법한 관계 타입을 감지했습니다: {pat_desc}.")
+        if mode == "routed":
+            if intent_added_types:
+                notes.append(f"이 중 임베딩 자동 라우팅(top-3)에는 없던 {', '.join(intent_added_types)}을(를) 라우팅에 추가로 끼워 넣었습니다.")
+        else:
+            notes.append('mode="all"이라 관계 타입 라우팅 자체가 없어 참고 정보로만 남깁니다.')
+
+    if paths:
+        found_paths = [p for p in paths if p.get("found")]
+        pair_descs = []
+        for p in paths:
+            a1, a2 = p["anchors"][0]["slug"], p["anchors"][1]["slug"]
+            detail = f"{len(p['relations'])}홉" if p.get("found") else "경로 없음"
+            pair_descs.append(f"{a1}\u2194{a2}({detail})")
+        cap_note = (
+            f" (전체 {anchors_total}개 중 상위 {anchors_considered}개만 대상으로)"
+            if anchors_total > anchors_considered else ""
+        )
+        notes.append(
+            f"별칭으로 지목된 노드가 {anchors_considered}개{cap_note}라 그 사이 가능한 쌍 "
+            f"{len(paths)}개를 전부 탐색했고, {len(found_paths)}개 쌍에서 경로를 찾았습니다: "
+            + ", ".join(pair_descs) + "."
+        )
+
+    return {
+        "alias_matches": alias_matches,
+        "intent": intent,
+        "intent_added_types": intent_added_types,
+        "paths": paths,
+        "summary": " ".join(notes),
+    }
