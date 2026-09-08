@@ -1,0 +1,259 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>AutoNote Sync Dashboard</title>
+<style>
+  :root {
+    --bg: #FAF9F5;
+    --surface: #FFFFFF;
+    --border: #E5E1D8;
+    --text: #2B2A28;
+    --text-muted: #6B6A65;
+    --accent: #D97757;
+    --accent-soft: #FBE9E1;
+    --good: #1a9c4a;
+    --good-soft: #e4f6ea;
+    --bad: #c0392b;
+    --bad-soft: #fbe9e7;
+    --warn: #a6790c;
+    --warn-soft: #fbf1de;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1F1E1D;
+      --surface: #262624;
+      --border: #3A3936;
+      --text: #E8E6E1;
+      --text-muted: #A9A79E;
+      --accent: #E08A67;
+      --accent-soft: #3A2A22;
+      --good: #4fd17e;
+      --good-soft: #163524;
+      --bad: #e5806b;
+      --bad-soft: #3a2420;
+      --warn: #e0b95a;
+      --warn-soft: #372e18;
+    }
+  }
+  html, body { margin: 0; padding: 0; min-height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+               background: var(--bg); color: var(--text); }
+  #header {
+    padding: 14px 20px; background: var(--surface); border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap; position: sticky; top: 0; z-index: 10;
+  }
+  #header b { font-size: 14px; }
+  .back-link {
+    display: inline-flex; align-items: center; gap: 4px; color: var(--accent); text-decoration: none;
+    font-weight: 600; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border); font-size: 12.5px;
+  }
+  .back-link:hover { background: var(--accent-soft); border-color: var(--accent); }
+  #main { max-width: 900px; margin: 0 auto; padding: 20px; box-sizing: border-box; }
+  .unresolved-banner {
+    display: none; align-items: center; gap: 10px; padding: 12px 16px; margin-bottom: 16px; border-radius: 10px;
+    background: var(--bad-soft); border: 1px solid var(--bad); color: var(--bad); font-size: 13.5px; font-weight: 600;
+  }
+  .unresolved-banner.show { display: flex; }
+  .filter-row { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; align-items: center; }
+  .filter-row select, .filter-row input {
+    padding: 6px 9px; border-radius: 7px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--text); font-size: 12.5px;
+  }
+  .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--good); display: inline-block; animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+  .op-list { display: flex; flex-direction: column; gap: 8px; }
+  .op-row {
+    border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; background: var(--surface);
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  }
+  .op-type-badge {
+    font-size: 10.5px; font-weight: 700; padding: 2px 8px; border-radius: 99px; white-space: nowrap;
+    background: var(--accent-soft); color: var(--accent);
+  }
+  .op-label { flex: 1; min-width: 160px; font-size: 13px; }
+  .op-ts { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+  .stage-row { display: flex; align-items: center; gap: 4px; }
+  .stage-chip {
+    font-size: 10.5px; font-weight: 700; padding: 2px 8px; border-radius: 99px; white-space: nowrap;
+  }
+  .stage-chip.done { background: var(--good-soft); color: var(--good); }
+  .stage-chip.pending, .stage-chip.syncing { background: var(--warn-soft); color: var(--warn); }
+  .stage-chip.error { background: var(--bad-soft); color: var(--bad); }
+  .stage-chip.skipped { background: var(--border); color: var(--text-muted); }
+  .stage-arrow { color: var(--text-muted); font-size: 11px; }
+  .op-error-msg {
+    width: 100%; font-size: 11.5px; color: var(--bad); background: var(--bad-soft);
+    border-radius: 6px; padding: 6px 10px; margin-top: 2px;
+  }
+  .empty-note { color: var(--text-muted); font-size: 13px; padding: 20px; text-align: center; }
+  .hint { font-size: 12px; color: var(--text-muted); line-height: 1.6; margin-bottom: 14px; }
+  code { background: var(--accent-soft); color: var(--accent); padding: 1px 5px; border-radius: 4px; font-size: 11.5px; }
+</style>
+</head>
+<body>
+<div id="header">
+  <a href="/" class="back-link">&larr; 그래프 뷰로</a>
+  <b>BrainGraph → Local → Neo4j 실시간 동기화 대시보드</b>
+  <span style="margin-left:auto; display:flex; align-items:center; gap:6px; font-size:12px; color:var(--text-muted);">
+    <span class="live-dot"></span> 1.5초마다 자동 새로고침
+  </span>
+</div>
+<div id="main">
+  <div class="hint">
+    논문 업로드/노드·에지 생성·삭제·수정, Brain 재태깅, 검색까지 - Neo4j에 닿는
+    모든 작업이 여기 한 줄씩 뜹니다. <b>BrainGraph</b>(요청 접수)와 <b>Local</b>
+    (md 파일 쓰기)은 이 작업이 시작된 시점엔 이미 끝나 있어서 항상 완료로
+    표시되고, <b>Neo4j</b> 단계만 실시간으로 진행 중 → 완료/실패로 바뀝니다.
+    로컬은 성공했는데 Neo4j만 실패한 항목이 있으면 위에 경고가 뜹니다 -
+    그 상태로 그냥 앱을 꺼도 다음에 다시 열었을 때 이 페이지에서 그대로
+    다시 보입니다(<code>logs/sync_queue.json</code>에 저장되므로).
+  </div>
+  <div class="unresolved-banner" id="unresolvedBanner"></div>
+  <div class="filter-row">
+    <select id="typeFilter">
+      <option value="">전체 종류</option>
+      <option value="node_sync">node_sync (노드 생성/수정)</option>
+      <option value="node_delete_sync">node_delete_sync (노드 삭제)</option>
+      <option value="paper_sync">paper_sync (논문)</option>
+      <option value="brain_retag">brain_retag (Brain 재태깅)</option>
+      <option value="search">search (검색)</option>
+    </select>
+    <select id="statusFilter">
+      <option value="">전체 상태</option>
+      <option value="pending">pending</option>
+      <option value="syncing">syncing</option>
+      <option value="done">done</option>
+      <option value="error">error</option>
+      <option value="skipped">skipped (Neo4j 미설정)</option>
+    </select>
+    <input type="number" id="limitInput" value="50" min="1" max="300" title="가져올 최대 개수">
+  </div>
+  <div id="opListWrap"><div class="empty-note">불러오는 중...</div></div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var STAGE_LABELS = { done: '완료', pending: '대기', syncing: '진행 중', error: '실패', skipped: '건너뜀' };
+  var TYPE_LABELS = {
+    node_sync: 'node_sync', node_delete_sync: 'node_delete_sync', paper_sync: 'paper_sync',
+    brain_retag: 'brain_retag', search: 'search',
+  };
+
+  function escapeHtml(s) {
+    var div = document.createElement('div');
+    div.textContent = s == null ? '' : String(s);
+    return div.innerHTML;
+  }
+
+  function stageChip(status) {
+    var s = status || 'done';
+    return '<span class="stage-chip ' + s + '">' + (STAGE_LABELS[s] || s) + '</span>';
+  }
+
+  // toLocaleString()을 인자 없이 쓰면 브라우저의 기본 로캘/표기 방식을 따라서
+  // (예: "9/6/2026, 7:12:37 PM") 시/분 자체는 맞아도 날짜 순서(월/일)나
+  // 오전오후 표기가 한국에서 보던 방식과 달라 "시간이 안 맞다"고 오해하기
+  // 쉽다 - timeZone/locale/24시간제를 명시해서 항상 같은 형식(한국 시간
+  // 기준, YYYY-MM-DD HH:mm:ss)으로 고정한다. 대시보드가 1.5초마다 전체를
+  // 다시 그리므로 "n분 전"도 그때마다 새로 계산돼 따로 타이머를 둘 필요가
+  // 없다 - 절대 시각과 상대 시각을 같이 보여줘야 "이게 방금 일어난 일인지,
+  // 예전 기록인지"를 시간 계산 없이 바로 알 수 있다.
+  function fmtTs(ts) {
+    if (!ts) return '';
+    var d = new Date(ts);
+    if (isNaN(d.getTime())) return ts;
+    var abs = d.toLocaleString('ko-KR', {
+      timeZone: 'Asia/Seoul', hour12: false,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+    });
+    return abs + ' (' + relativeTime(d) + ')';
+  }
+
+  function relativeTime(d) {
+    var diffSec = Math.round((Date.now() - d.getTime()) / 1000);
+    if (diffSec < 5) return '방금 전';
+    if (diffSec < 60) return diffSec + '초 전';
+    var diffMin = Math.round(diffSec / 60);
+    if (diffMin < 60) return diffMin + '분 전';
+    var diffHour = Math.round(diffMin / 60);
+    if (diffHour < 24) return diffHour + '시간 전';
+    return Math.round(diffHour / 24) + '일 전';
+  }
+
+  function renderOp(entry) {
+    var row = document.createElement('div');
+    row.className = 'op-row';
+    var typeLabel = TYPE_LABELS[entry.op_type] || entry.op_type;
+    var html =
+      '<span class="op-type-badge">' + escapeHtml(typeLabel) + '</span>' +
+      '<span class="op-label">' + escapeHtml(entry.label || '') + '</span>' +
+      '<div class="stage-row">' +
+        stageChip(entry.brain_graph_status) + '<span class="stage-arrow">&rarr;</span>' +
+        stageChip(entry.local_status) + '<span class="stage-arrow">&rarr;</span>' +
+        stageChip(entry.neo4j_status) +
+      '</div>' +
+      '<span class="op-ts">' + escapeHtml(fmtTs(entry.started_at)) + '</span>';
+    if (entry.neo4j_error) {
+      html += '<div class="op-error-msg">' + escapeHtml(entry.neo4j_error) + '</div>';
+    }
+    row.innerHTML = html;
+    return row;
+  }
+
+  function renderList(entries) {
+    var wrap = document.getElementById('opListWrap');
+    var typeF = document.getElementById('typeFilter').value;
+    var statusF = document.getElementById('statusFilter').value;
+    var filtered = entries.filter(function (e) {
+      if (typeF && e.op_type !== typeF) return false;
+      if (statusF && e.neo4j_status !== statusF) return false;
+      return true;
+    });
+    wrap.innerHTML = '';
+    if (!filtered.length) {
+      wrap.innerHTML = '<div class="empty-note">기록된 작업이 없습니다.</div>';
+      return;
+    }
+    var list = document.createElement('div');
+    list.className = 'op-list';
+    filtered.forEach(function (entry) { list.appendChild(renderOp(entry)); });
+    wrap.appendChild(list);
+  }
+
+  function renderBanner(unresolvedCount) {
+    var banner = document.getElementById('unresolvedBanner');
+    if (unresolvedCount > 0) {
+      banner.classList.add('show');
+      banner.textContent = '⚠ Neo4j 동기화가 실패한 채로 남은 작업이 ' + unresolvedCount + '건 있습니다 - 로컬과 Neo4j 상태가 다를 수 있습니다. 아래 목록에서 error로 표시된 항목을 확인하세요.';
+    } else {
+      banner.classList.remove('show');
+      banner.textContent = '';
+    }
+  }
+
+  function refresh() {
+    var limit = parseInt(document.getElementById('limitInput').value, 10) || 50;
+    fetch('/api/sync-operations?limit=' + limit)
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        renderList(data.operations || []);
+        renderBanner(data.unresolved_count || 0);
+      })
+      .catch(function () {
+        document.getElementById('opListWrap').innerHTML = '<div class="empty-note">서버에 연결할 수 없습니다. uvicorn이 실행 중인지 확인하세요.</div>';
+      });
+  }
+
+  document.getElementById('typeFilter').addEventListener('change', refresh);
+  document.getElementById('statusFilter').addEventListener('change', refresh);
+  document.getElementById('limitInput').addEventListener('change', refresh);
+
+  refresh();
+  setInterval(refresh, 1500);
+})();
+</script>
+</body>
+</html>

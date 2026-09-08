@@ -8,7 +8,6 @@ import os
 import re
 import tempfile
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
@@ -52,6 +51,8 @@ from paper_notes.node_store import (
     update_user_section,
 )
 from paper_notes.relation_types import load_relation_types
+from paper_notes import sync_queue
+from paper_notes import sync_worker
 from paper_notes.brains import (
     create_brain,
     delete_brain,
@@ -115,39 +116,22 @@ def get_vault_path() -> str:
 
 # node_store(.md 파일)를 바꾸는 모든 엔드포인트가, 성공하면 그 변경을 Neo4j
 # 미러(paper_notes/graph_db.py)에도 반영한다 - GraphRAG 검색(MCP)이 항상 최신
-# 상태를 보게 하기 위함. Neo4j가 아직 설정 안 됐거나(.env 미기입) 일시적으로
-# 응답이 없어도 이 동기화 실패가 방금 성공한 실제 변경(node_store)까지 되돌리거나
-# 사용자에게 에러로 보여선 안 되므로, 항상 조용히 삼키고 로그만 남긴다(Supabase
-# 업로드 실패를 처리하는 기존 패턴과 같다).
+# 상태를 보게 하기 위함. 로컬 쓰기는 이미 끝난 뒤이므로(이 함수가 불릴 때
+# node_store 변경은 항상 성공해 있다), 여기서부터는 sync_queue.start()로
+# "neo4j: pending"을 디스크에 남기고 sync_worker.submit()으로 큐에 넣기만
+# 한다 - 실제 Neo4j 왕복은 백그라운드 스레드가 하고 이 함수는 즉시 리턴한다.
+# 그러니 이 동기화가 실패해도(또는 아직 안 끝났어도) 방금 성공한 실제 변경
+# (node_store)이 되돌아가거나 이 HTTP 요청 자체가 그 실패를 뒤집어쓰는 일은
+# 없다 - 대신 실패/진행 상황은 static/sync_dashboard.html에서 실시간으로
+# 보인다(logs/sync_queue.json, paper_notes/sync_queue.py 참고).
 def _sync_node(node_type: str, slug: str) -> None:
-    try:
-        _gdb_sync_node(node_type, slug)
-    except Neo4jNotConfigured:
-        pass
-    except Exception as exc:  # noqa: BLE001
-        print(f"  [경고] Neo4j 동기화 실패({node_type}:{slug}): {exc}")
+    op_id = sync_queue.start("node_sync", f"{node_type}:{slug} 동기화", {"node_type": node_type, "slug": slug})
+    sync_worker.submit(op_id, _gdb_sync_node, node_type, slug)
 
 
 def _sync_paper(slug: str, title: str, tags: list[str] | None = None) -> None:
-    try:
-        _gdb_sync_paper(slug, title, tags)
-    except Neo4jNotConfigured:
-        pass
-    except Exception as exc:  # noqa: BLE001
-        print(f"  [경고] Neo4j 논문 동기화 실패({slug}): {exc}")
-
-
-# Brain 재동기화(논문 1개당 최대 1 + N번의 Neo4j 왕복 - 노드 개수만큼)는 원격
-# Neo4j(Aura)라 왕복마다 네트워크 지연이 붙어서, 응답 안에서 기다리면 Folder
-# 배정(로컬 JSON만 씀)과 다르게 몇백 ms~1초 넘게 걸릴 수 있다. 그래서 아래
-# Brain 엔드포인트들은 이 함수를 FastAPI BackgroundTasks로 돌린다 - HTTP
-# 응답은 로컬 변경(진짜 저장소)이 끝나는 즉시 나가고, Neo4j 태깅은 응답을
-# 보낸 뒤 이어서 실행된다. 그 대신 실패해도 더 이상 HTTP 에러로 알릴 방법이
-# 없으므로(응답이 이미 나갔음), 마지막 실패 하나를 여기 기억해뒀다가
-# /api/neo4j-sync-status로 조회할 수 있게 한다 - papers.js가 Brain 배정
-# 액션 직후 잠깐 뒤에 이걸 확인해서 사용자에게 보여준다(조용히 삼키던 이전
-# 방식과 다르게, 실패를 실제로 드러낸다).
-_last_brain_sync_error: dict | None = None
+    op_id = sync_queue.start("paper_sync", f"논문 '{title}' 동기화", {"slug": slug})
+    sync_worker.submit(op_id, _gdb_sync_paper, slug, title, tags)
 
 
 def _resync_paper_brain(paper_slug: str) -> None:
@@ -161,28 +145,22 @@ def _resync_paper_brain(paper_slug: str) -> None:
     SET하는 경로로 분리했다. 영향받는 concept/entity는
     node_store.find_node_slugs_by_paper()로 찾는다.
 
-    항상 백그라운드 작업으로 스케줄돼서(호출부의 BackgroundTasks.add_task 참고)
-    HTTP 응답이 이미 나간 뒤에 실행된다."""
-    global _last_brain_sync_error
-    try:
+    _sync_node()/_sync_paper()와 같은 큐+워커를 그대로 쓴다 - 그래서 이
+    함수도 즉시 리턴하고, 호출하는 엔드포인트들이 여전히 FastAPI
+    BackgroundTasks로 감싸고 있는 건(해가 되진 않지만) 이제 엄밀히는
+    불필요하다 - 이 함수 자체가 이미 비동기이기 때문."""
+    def _do() -> None:
         _gdb_retag_paper_brain(paper_slug)
         for node_type, node_slug in find_node_slugs_by_paper(NODE_STORE_ROOT, paper_slug):
             _gdb_retag_node_brain(node_type, node_slug)
-    except Neo4jNotConfigured:
-        pass
-    except Exception as exc:  # noqa: BLE001
-        message = f"Neo4j Brain 재태깅 실패({paper_slug}): {exc}"
-        print(f"  [경고] {message}")
-        _last_brain_sync_error = {"message": message, "at": datetime.now(timezone.utc).isoformat()}
+
+    op_id = sync_queue.start("brain_retag", f"논문 '{paper_slug}' Brain 재태깅", {"slug": paper_slug})
+    sync_worker.submit(op_id, _do)
 
 
 def _delete_node_from_graph(node_type: str, slug: str) -> None:
-    try:
-        _gdb_delete_node(node_type, slug)
-    except Neo4jNotConfigured:
-        pass
-    except Exception as exc:  # noqa: BLE001
-        print(f"  [경고] Neo4j 노드 삭제 동기화 실패({node_type}:{slug}): {exc}")
+    op_id = sync_queue.start("node_delete_sync", f"{node_type}:{slug} Neo4j에서 삭제", {"node_type": node_type, "slug": slug})
+    sync_worker.submit(op_id, _gdb_delete_node, node_type, slug)
 
 
 def _event(stage: str, percent: int, message: str, **extra) -> str:
@@ -741,13 +719,35 @@ def _resync_papers_in_folders(folder_ids: list[str]) -> None:
 
 @app.get("/api/neo4j-sync-status")
 async def get_neo4j_sync_status():
-    """가장 최근의 Brain 백그라운드 재동기화 실패(있다면)를 반환한다 - Brain
-    배정/삭제/병합은 이제 백그라운드로 도니 실패해도 그 요청의 HTTP 응답에는
-    실릴 수 없다(이미 나간 뒤라서). papers.js가 그 액션 직후 잠깐 뒤에 이걸
-    확인해서 사용자에게 보여준다. 성공하면 값이 안 바뀌므로, 프론트는 액션을
-    시작한 시각 이후의 에러인지(`at`)까지 같이 확인해야 오래된 실패를 다시
-    보여주지 않는다."""
-    return {"last_error": _last_brain_sync_error}
+    """가장 최근의 미해결 Neo4j 동기화 실패(있다면)를 반환한다 - Brain 배정/
+    폴더 이동/노드 CRUD 전부 이제 백그라운드로 도니 실패해도 그 요청의 HTTP
+    응답에는 실릴 수 없다(이미 나간 뒤라서). papers.js가 그 액션 직후 잠깐
+    뒤에 이걸 확인해서 사용자에게 보여준다. sync_queue.json(디스크)을 그대로
+    읽으므로 앱을 재시작해도 안 없어진다 - 프론트는 액션을 시작한 시각 이후의
+    에러인지(`at`)까지 같이 확인해야 오래된 실패를 다시 보여주지 않는다.
+    전체 작업 목록(진행 중 포함)은 /api/sync-operations 참고 -
+    static/sync_dashboard.html이 그쪽을 쓴다."""
+    unresolved = sync_queue.list_unresolved()
+    last_error = None
+    if unresolved:
+        latest = unresolved[0]
+        last_error = {"message": latest["neo4j_error"], "at": latest["updated_at"]}
+    return {"last_error": last_error}
+
+
+@app.get("/api/sync-operations")
+async def get_sync_operations(limit: int = 50):
+    """BrainGraph -> Local -> Neo4j 파이프라인의 최근 작업 목록을 반환한다 -
+    static/sync_dashboard.html이 주기적으로 폴링해서 실시간 대시보드를
+    그린다. 노드/논문 동기화, Brain 재태깅, 검색까지 전부 같은
+    logs/sync_queue.json에 남으므로 한 화면에서 다 보인다(paper_notes/
+    sync_queue.py 참고). unresolved_count는 neo4j_status="error"인 항목
+    수 - 0보다 크면 로컬과 Neo4j 상태가 실제로 어긋나 있다는 뜻이라, 상단바
+    배지가 이 값을 폴링해서 경고를 띄운다."""
+    return {
+        "operations": sync_queue.list_recent(limit=limit),
+        "unresolved_count": len(sync_queue.list_unresolved()),
+    }
 
 
 @app.get("/api/brains")
@@ -868,9 +868,16 @@ async def get_graph_search(
     별칭이 2개 이상 매칭됐을 때의 최단 경로 탐색 결과, 그리고 이 모든 걸
     합친 한 줄 요약을 담는다 - "어떤 노드/엣지가 뽑혔는지"뿐 아니라 "왜
     그렇게 뽑혔는지"를 보여주기 위함이다. results의 각 시드에도
-    seed_source("embedding"/"alias"/"both")가 추가로 붙는다."""
+    seed_source("embedding"/"alias"/"both")가 추가로 붙는다.
+
+    검색은 (쓰기와 달리) Neo4j를 그 자리에서 바로 읽으므로 비동기로 미룰 게
+    없다 - 그래도 sync_queue에 op_type="search"로 같이 남겨서, 대시보드
+    (static/sync_dashboard.html)에서 쓰기 작업과 한 타임라인에 섞여 보이게
+    한다("지금 뭐가 일어나고 있는지" 전체를 보여주는 게 목적이라, 읽기/쓰기를
+    나눠서 보여줄 이유가 없다)."""
+    rel_types_list = [t.strip() for t in relation_types.split(",") if t.strip()] if relation_types else None
+    op_id = sync_queue.start("search", f"검색: {q}", {"query": q, "mode": mode})
     try:
-        rel_types_list = [t.strip() for t in relation_types.split(",") if t.strip()] if relation_types else None
         started = time.perf_counter()
         results, reasoning = graph_db_search(
             q, top_k, brain_id,
@@ -878,6 +885,7 @@ async def get_graph_search(
             neighbor_cap=neighbor_cap, hop2_top_n=hop2_top_n,
         )
         duration_ms = (time.perf_counter() - started) * 1000
+        sync_queue.mark_done(op_id)
         log_traversal(
             query=q, mode=mode, top_k=top_k, brain_id=brain_id,
             relation_types_requested=rel_types_list,
@@ -889,7 +897,11 @@ async def get_graph_search(
         )
         return {"results": results, "reasoning": reasoning}
     except Neo4jNotConfigured as exc:
+        sync_queue.mark_skipped(op_id, str(exc))
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - 대시보드에 실패로 남긴 뒤 그대로 다시 던진다(응답은 여전히 500)
+        sync_queue.mark_error(op_id, str(exc))
+        raise
 
 
 @app.get("/api/traversal-logs")

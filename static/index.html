@@ -74,6 +74,17 @@
      쓴다 - papers.js/graph.js가 각각 채운다. */
   .topnav-stats { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: var(--fs-sm); color: var(--text-muted); font-weight: 600; }
   .topnav-stats .sep { opacity: .5; }
+  /* 링크를 눌러야만(Sync Dashboard 페이지) 보이는 대신, 메인 화면을 벗어나지
+     않아도 "로컬과 Neo4j가 어긋나 있다"를 바로 알 수 있어야 해서 상단바에도
+     항상 폴링하는 배지를 하나 둔다 - 평소(미해결 실패 없음)엔 아예 숨어서
+     통계 줄을 방해하지 않는다. */
+  .sync-status-badge {
+    display: none; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px;
+    font-size: var(--fs-xs); font-weight: 700; text-decoration: none; white-space: nowrap;
+    background: var(--error-soft); color: var(--error); border: 1px solid var(--error);
+  }
+  .sync-status-badge.show { display: inline-flex; }
+  .sync-status-badge:hover { background: var(--error); color: var(--surface); }
 
   .page { display: flex; flex-direction: column; align-items: center; padding: 24px 20px 64px; }
 
@@ -336,6 +347,7 @@
       <span id="statPapers">-</span>
       <span class="sep">·</span>
       <span id="statNodes">-</span>
+      <a id="syncStatusBadge" class="sync-status-badge" href="/sync_dashboard.html" target="_blank" rel="noopener" title="BrainGraph → Local → Neo4j 동기화 대시보드"></a>
     </div>
   </div>
 </header>
@@ -424,6 +436,7 @@
         <button class="graph-btn" id="btnFullGraph">전체 그래프 보기</button>
         <button class="graph-btn" id="btnAddNode">+ 새 노드</button>
         <a class="graph-btn" id="btnSemanticView" href="/semantic_view.html" target="_blank" rel="noopener">Semantic View</a>
+        <a class="graph-btn" id="btnSyncDashboard" href="/sync_dashboard.html" target="_blank" rel="noopener">Sync Dashboard</a>
         <label class="switch-wrap">
           <input type="checkbox" id="toggleTags" checked />
           <span class="switch"></span>
@@ -622,6 +635,24 @@ async function handleFile(file) {
     abortController = null;
   }
 }
+
+// 상단바 배지 - "로컬은 바뀌었는데 Neo4j 반영은 실패한 채로 남아 있다"를
+// 사용자가 Sync Dashboard(/sync_dashboard.html)를 따로 열어보지 않아도 메인
+// 화면에서 바로 알 수 있게 한다. logs/sync_queue.json은 디스크에 남으므로
+// 앱을 재시작해도 unresolved_count가 그대로 유지된다 - 이 배지도 새로고침
+// 즉시 그 값을 다시 보여준다.
+(function pollSyncStatus() {
+  fetch('/api/sync-operations?limit=1')
+    .then((res) => res.json())
+    .then((data) => {
+      const badge = document.getElementById('syncStatusBadge');
+      const count = data.unresolved_count || 0;
+      badge.classList.toggle('show', count > 0);
+      badge.textContent = count > 0 ? `⚠ Neo4j 동기화 실패 ${count}건` : '';
+    })
+    .catch(() => {}); // 서버가 아직 안 떴거나 잠깐 응답이 없어도 다음 폴링에서 다시 시도
+  setTimeout(pollSyncStatus, 5000);
+})();
 </script>
 </body>
 </html>
