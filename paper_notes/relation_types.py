@@ -44,7 +44,7 @@ DEFAULT_RELATION_TYPES: dict[str, dict] = {
 }
 
 
-# 12개 타입의 한글 설명 - docs/graph/relation_type.md의 표와 test/search_flow_visualizer.html의
+# 12개 타입의 한글 설명 - docs/graph/relation_type.md의 표와 static/search_flow_visualizer.html의
 # REL_TYPES를 그대로 옮긴 것(세 곳이 같은 문구를 쓰도록 유지). graph_db.py의
 # search(mode="routed")가 이 설명을 임베딩해서 "쿼리와 관련도 높은 관계 타입"을
 # 실제 코사인 유사도로 고르는 데 쓴다(docs/mcp/search_flow.md의 "개선 설계안" 참고).

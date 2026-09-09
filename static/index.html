@@ -429,14 +429,23 @@
 <div class="graph-column">
 <aside id="graphPanel">
   <div id="graphModeView">
-    <div class="graph-title" id="graphTitle">Knowledge Graph</div>
+    <div class="graph-title-row">
+      <div class="graph-title" id="graphTitle">Knowledge Graph</div>
+      <!-- 그래프 자체를 다루는 버튼(전체 그래프 보기/새 노드/태그 표시 등)과
+           달리 이 셋은 별도 페이지로 나가는 도구 모음이라, 메인 툴바에 같이
+           두면 "지금 이 그래프에 뭘 할 수 있나"와 "다른 도구로 가기"가
+           뒤섞여 헷갈렸다(사용자 피드백) - 제목 줄 오른쪽에 작게 분리했다. -->
+      <div class="graph-tools-row">
+        <a class="graph-tool-link" href="/semantic_view.html" target="_blank" rel="noopener">Semantic View</a>
+        <a class="graph-tool-link" href="/sync_dashboard.html" target="_blank" rel="noopener">Sync Dashboard</a>
+        <a class="graph-tool-link" href="/search_flow_visualizer.html" target="_blank" rel="noopener">Search Flow Visualizer</a>
+      </div>
+    </div>
     <div class="graph-hint">논문 노드끼리는 공통 태그로, 위키링크가 있으면 그걸로도 연결됩니다. 클릭 가능한 노드는 클릭하면 md 노트를 볼 수 있습니다.</div>
     <div class="graph-toolbar-wrap">
       <div class="graph-toolbar">
         <button class="graph-btn" id="btnFullGraph">전체 그래프 보기</button>
         <button class="graph-btn" id="btnAddNode">+ 새 노드</button>
-        <a class="graph-btn" id="btnSemanticView" href="/semantic_view.html" target="_blank" rel="noopener">Semantic View</a>
-        <a class="graph-btn" id="btnSyncDashboard" href="/sync_dashboard.html" target="_blank" rel="noopener">Sync Dashboard</a>
         <label class="switch-wrap">
           <input type="checkbox" id="toggleTags" checked />
           <span class="switch"></span>

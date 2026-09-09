@@ -435,7 +435,13 @@
   var state = {
     mode: "current",
     lastResults: null,
-    baseUrl: localStorage.getItem("sfv_baseUrl") || "http://localhost:8123",
+    // static/으로 옮겨온 뒤로는 이 페이지 자체가 app.py와 같은 origin으로
+    // 뜨는 게 기본 사용법이라(예: http://localhost:8123/search_flow_visualizer.html),
+    // location.origin을 기본값으로 쓰면 대부분 아무것도 안 건드려도 바로
+    // 붙는다. file://로 직접 열었을 때(예전 방식, 여전히 지원)는
+    // location.origin이 "null"이라 그때만 예전 하드코딩 기본값으로 되돌린다.
+    baseUrl: localStorage.getItem("sfv_baseUrl") ||
+      (location.protocol === "file:" ? "http://localhost:8123" : location.origin),
     brainId: localStorage.getItem("sfv_brainId") || "",
     // 자동 관계 타입 라우팅(서버가 실제로 계산해 응답에 담아 보내는 routed_types)이
     // 체크박스를 계속 덮어써도 되는지. 사용자가 체크박스를 하나라도 직접 클릭하면

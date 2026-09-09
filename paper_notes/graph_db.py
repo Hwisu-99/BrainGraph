@@ -455,7 +455,7 @@ def _route_relation_types(
     must_include: set[str] | None = None,
 ) -> dict[str, float]:
     """쿼리 임베딩과 각 관계 타입 설명 임베딩의 코사인 유사도로 top_n개(+
-    점수)를 고른다 - 진짜 임베딩 기반(test/search_flow_visualizer.html의 예전
+    점수)를 고른다 - 진짜 임베딩 기반(static/search_flow_visualizer.html의 예전
     클라이언트 사이드 텍스트 겹침 데모를 대체하는 실제 구현). 전부 낮은
     점수여도 top_n개는 반환한다 - 아예 안 걸리는 것보단 그나마 가까운
     것들이라도 이웃을 보여주는 게 낫다는 판단.

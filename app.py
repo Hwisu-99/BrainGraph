@@ -88,9 +88,12 @@ load_dotenv()
 
 app = FastAPI(title="AutoNote Paper Summarizer")
 
-# test/search_flow_visualizer.html처럼 이 서버와 다른 origin(파일로 직접 열거나
-# 별도 포트)에서 API를 호출하는 로컬 개발용 페이지를 위해 CORS를 연다. 이 앱은
-# 인증 없이 로컬(localhost)에서만 도는 개인용 툴이라 광범위 허용의 위험이 낮다.
+# static/search_flow_visualizer.html이 app.py와 같은 origin(예:
+# http://localhost:8123/search_flow_visualizer.html)으로 뜨는 게 이제 기본
+# 사용법이라 원래는 CORS가 굳이 필요 없지만, file://로 직접 열어서 쓰는 예전
+# 방식도 여전히 지원하므로(다른 origin에서 API를 호출) 그대로 열어둔다. 이
+# 앱은 인증 없이 로컬(localhost)에서만 도는 개인용 툴이라 광범위 허용의
+# 위험이 낮다.
 # DELETE는 로그 히스토리의 "삭제" 버튼(DELETE /api/traversal-logs)이 크로스
 # 오리진으로 호출하면서 추가됨 - GET 외의 메서드는 브라우저가 먼저 OPTIONS
 # 프리플라이트를 보내는데, allow_methods에 없으면 이게 그냥 막혀서(400) 실제
@@ -852,7 +855,7 @@ async def get_graph_search(
     mode="all"(기본값)이면 지금까지와 완전히 동일하다 - mode/relation_types/
     neighbor_cap/hop2_top_n을 아무도 모르던 예전 호출(MCP search_graph 포함)도
     그대로 동작한다. mode="routed"는 docs/mcp/search_flow.md의 "개선
-    설계안"(test/search_flow_visualizer.html이 쓴다) - graph_db.search()의
+    설계안"(static/search_flow_visualizer.html이 쓴다) - graph_db.search()의
     같은 이름 파라미터를 그대로 넘긴다.
 
     호출 하나마다 traversal_log.log_traversal()로 logs/traversal_log.jsonl에 기록된다 -
@@ -906,7 +909,7 @@ async def get_graph_search(
 
 @app.get("/api/traversal-logs")
 async def get_traversal_logs(limit: int = 50, source: str | None = None, mode: str | None = None):
-    """test/search_flow_visualizer.html의 "로그 히스토리" 탭이 쓰는 조회 API - 실제
+    """static/search_flow_visualizer.html의 "로그 히스토리" 탭이 쓰는 조회 API - 실제
     /api/graph-search 호출(MCP search_graph 포함)마다 남겨진 traversal_log.jsonl을
     최신순으로 최대 limit개 반환한다. source="mcp"로 좁히면 Claude가 실제 대화
     중에 실제로 쓴 검색만, source="web"이면 브라우저(시각화 툴 테스트 포함)에서 날린
@@ -916,7 +919,7 @@ async def get_traversal_logs(limit: int = 50, source: str | None = None, mode: s
 
 @app.delete("/api/traversal-logs")
 async def delete_traversal_log(ts: str):
-    """test/search_flow_visualizer.html의 "로그 히스토리"에서 항목 하나를 지울 때
+    """static/search_flow_visualizer.html의 "로그 히스토리"에서 항목 하나를 지울 때
     쓴다 - ts(그 로그 엔트리의 timestamp, 마이크로초까지 있어 사실상 고유한 값)로
     식별한다. 지운 게 있으면 {"deleted": true}, 이미 없었으면(중복 클릭 등)
     {"deleted": false}를 반환한다 - 어느 쪽이든 200으로 응답하고 404를 쓰지 않는다

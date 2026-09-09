@@ -3,7 +3,7 @@
 
 왜 여기 있나: mcp_server.py는 비즈니스 로직을 두지 않고 app.py의 REST API를
 그대로 감싸서 쓰기만 하므로(mcp_server.py 파일 docstring 참고), Claude가 실제
-대화 중 search_graph를 호출하든 test/search_flow_visualizer.html이 테스트
+대화 중 search_graph를 호출하든 static/search_flow_visualizer.html이 테스트
 쿼리를 날리든 결국 둘 다 app.py의 /api/graph-search 라우트 하나를 거친다.
 그래서 로깅도 그 라우트 한 곳(app.py)에서 이 모듈을 호출하는 것만으로 두
 경로를 전부 잡아낸다 - graph_db.py나 mcp_server.py를 따로 건드릴 필요가 없다.
@@ -49,7 +49,7 @@ def log_traversal(
     반환한 그 리스트를 그대로 넣는다 - mode="all"이면 시드마다 flat neighbors[],
     mode="routed"면 provenance_neighbors/semantic_neighbors/routed_types/
     semantic_total_before_cap(+선택적 hop2)까지 그대로 들어가므로, 나중에
-    test/search_flow_visualizer.html이 이 로그를 읽을 때 실시간 검색 결과를
+    static/search_flow_visualizer.html이 이 로그를 읽을 때 실시간 검색 결과를
     그리는 것과 완전히 같은 렌더링 함수를 그대로 재사용할 수 있다.
 
     reasoning은 graph_db.search()가 함께 반환하는 "사고 과정"(별칭/이름
@@ -81,7 +81,7 @@ def log_traversal(
 
 
 def delete_traversal_log_entry(ts: str) -> bool:
-    """test/search_flow_visualizer.html의 "실사용 로그 히스토리"에서 항목 하나를
+    """static/search_flow_visualizer.html의 "실사용 로그 히스토리"에서 항목 하나를
     지울 때 쓴다. JSONL은 append-only라 "그 줄만 지우기"가 원래 없으므로, 파일
     전체를 읽어서 ts(각 엔트리의 timestamp - datetime.now(timezone.utc).isoformat()
     라 마이크로초까지 있어 사실상 고유하다)가 일치하는 첫 줄만 빼고 통째로 다시
